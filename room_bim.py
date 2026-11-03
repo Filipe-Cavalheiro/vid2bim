@@ -235,9 +235,12 @@ def to_freecad(ifc: Path) -> Path | None:
         log("FreeCAD not found - skipping .FCStd")
         return None
     out = ifc.with_suffix(".FCStd")
-    script = ifc.parent / "freecad_import.py"
+    work = ifc.parent / "bim" if (ifc.parent / "bim").is_dir() else ifc.parent
+    script = work / "freecad_import.py"
     script.write_text(FREECAD_SCRIPT.format(ifc=str(ifc), out=str(out)))
     subprocess.run(cmd + [str(script)])
+    shutil.rmtree(work / "__pycache__", ignore_errors=True)
+    shutil.rmtree(ifc.parent / "__pycache__", ignore_errors=True)
     if out.exists():
         log(f"FreeCAD model: {out}")
         return out

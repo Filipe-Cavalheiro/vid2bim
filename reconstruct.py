@@ -256,7 +256,7 @@ def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
     if len(groups) > 1:
         pairs = cross_video_pairs(images, groups, args.cross_keyframes)
         log(f"      cross-video matching ({len(pairs)} keyframe pairs)")
-        pair_file = scene / "cross_pairs.txt"
+        pair_file = sparse / "cross_pairs.txt"
         pair_file.write_text("".join(f"{a} {b}\n" for a, b in pairs))
         imp = pycolmap.ImportedPairingOptions()
         imp.match_list_path = str(pair_file)
