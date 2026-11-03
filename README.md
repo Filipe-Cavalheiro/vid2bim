@@ -63,6 +63,33 @@ The `.blend` contains:
 - If you get several models, or few frames are registered, try a higher `--fps` (more overlap), a higher `--overlap`, or slower camera motion.
 - The camera solve ignores lens distortion in Blender (the default model is `SIMPLE_RADIAL`). For wide or fisheye lenses, try `--camera-model OPENCV`.
 
+## AI agent access to Blender and FreeCAD (MCP)
+
+`.mcp.json` registers two MCP servers for this project, so Claude Code and other MCP-capable agents opened in this folder can drive the apps:
+
+- `blender` is [MCP for Blender](https://github.com/ahujasid/mcp-for-blender), started with `uvx mcp-for-blender`. Its telemetry is turned off in `.mcp.json`.
+- `freecad` is [freecad-mcp](https://github.com/neka-nat/freecad-mcp), started with `uvx freecad-mcp`.
+
+Each server talks to an add-on that runs inside the app, so install the add-ons once:
+
+```bash
+# Blender add-on, then enable "Interface: MCP for Blender" in Preferences → Add-ons
+DISABLE_TELEMETRY=true uvx mcp-for-blender install-addon
+
+# FreeCAD add-on (the folder below is for the Flatpak install of FreeCAD 1.1;
+# in FreeCAD's Python console, os.path.join(FreeCAD.getUserAppDataDir(), "Mod") prints yours)
+git clone --depth 1 https://github.com/neka-nat/freecad-mcp.git /tmp/freecad-mcp
+mkdir -p ~/.var/app/org.freecad.FreeCAD/data/FreeCAD/v1-1/Mod
+cp -r /tmp/freecad-mcp/addon/FreeCADMCP ~/.var/app/org.freecad.FreeCAD/data/FreeCAD/v1-1/Mod/
+```
+
+Each app has to be open for its agent tools to work:
+
+- **Blender:** the add-on starts its server on `localhost:9876` automatically. You can also start it from the **MCP for Blender** tab in the 3D view's `N` panel.
+- **FreeCAD:** switch to the **MCP Addon** workbench and click **Start RPC Server**, which listens on `127.0.0.1:9875`. Enable **FreeCAD MCP → Auto-Start Server** to have it start on its own.
+
+⚠️ Both servers let an agent run arbitrary Python inside the app, without authentication. Keep them bound to localhost, and save your work before letting an agent edit a scene.
+
 ## Credits and related projects
 
 vid2blend builds on other people's work. If it doesn't fit your needs, one of these might:
