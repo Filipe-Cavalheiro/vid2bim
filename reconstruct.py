@@ -12,6 +12,7 @@ from __future__ import annotations
 import argparse
 import itertools
 import json
+import math
 import os
 import shutil
 import subprocess
@@ -132,6 +133,33 @@ def clean_model(rec, min_points: int = 15) -> None:
     log(f"      cleaned model: dropped {len(bad_frames)} unreliable frames, {len(far)} far points")
 
 
+def known_focal(images: Path, groups: list[str], args):
+    """(focal_px, width, height) from --hfov, or estimated with MoGe-2 if installed, else None."""
+    import cv2
+    import numpy as np
+    first = sorted((images / groups[0]).glob("frame_*.jpg"))[0]
+    h, w = cv2.imread(str(first)).shape[:2]
+    if args.hfov:
+        f = w / 2 / math.tan(math.radians(args.hfov) / 2)
+        log(f"      focal length from --hfov {args.hfov}°: {f:.0f} px (fixed)")
+        return f, w, h
+    if args.no_focal_estimate:
+        return None
+    try:
+        from dense_moge import estimate_focal
+    except ImportError:
+        log("      MoGe not installed - COLMAP will estimate the focal length")
+        return None
+    frames = []
+    for g in groups:
+        fs = sorted((images / g).glob("frame_*.jpg"))
+        frames += [fs[i] for i in sorted({int(x) for x in np.linspace(0, len(fs) - 1, 12)})]
+    f = estimate_focal(frames)
+    log(f"      focal length estimated by MoGe-2: {f:.0f} px, "
+        f"hfov {math.degrees(2 * math.atan(w / 2 / f)):.1f}° (fixed; override with --hfov)")
+    return f, w, h
+
+
 def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
     import pycolmap
 
@@ -149,6 +177,11 @@ def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
     ext.use_gpu = not args.cpu
     reader = pycolmap.ImageReaderOptions()
     reader.camera_model = args.camera_model
+    focal = known_focal(images, groups, args)
+    if focal:
+        # one shared, fixed focal length: self-calibration from handheld video is unreliable
+        w, h = focal[1], focal[2]
+        reader.camera_params = f"{focal[0]},{w / 2},{h / 2}" + ",0" * (args.camera_model != "SIMPLE_PINHOLE")
     pycolmap.extract_features(
         db, images,
         camera_mode=pycolmap.CameraMode.PER_FOLDER,  # one shared camera per video
@@ -173,11 +206,14 @@ def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
 
     if args.mapper == "global":
         log("[4/4] global mapping (GLOMAP)")
-        recs = pycolmap.global_mapping(db, images, sparse)
+        gopts = pycolmap.GlobalPipelineOptions()
+        gopts.mapper.bundle_adjustment.refine_focal_length = not focal
+        recs = pycolmap.global_mapping(db, images, sparse, options=gopts)
     else:
         log("[4/4] incremental mapping (this is the slow part)")
         opts = pycolmap.IncrementalPipelineOptions()
         opts.num_threads = os.cpu_count() or -1
+        opts.ba_refine_focal_length = not focal
         recs = pycolmap.incremental_mapping(db, images, sparse, options=opts)
     if not recs:
         log("✖ mapper produced no model (too little texture/parallax? try more frames or --overlap)")
@@ -291,6 +327,11 @@ def main() -> None:
     ap.add_argument("--mapper", choices=["global", "incremental"], default="global",
                     help="global (GLOMAP) is faster and copes better with handheld pans; "
                          "incremental is the original COLMAP mapper")
+    ap.add_argument("--hfov", type=float, default=None,
+                    help="horizontal field of view of the video in degrees (fixes the focal length); "
+                         "default: estimated with MoGe-2 when installed")
+    ap.add_argument("--no-focal-estimate", action="store_true",
+                    help="let COLMAP self-calibrate the focal length instead")
     ap.add_argument("--camera-model", default="SIMPLE_RADIAL",
                     help="COLMAP camera model (SIMPLE_RADIAL, OPENCV, PINHOLE, ...)")
     ap.add_argument("--cpu", action="store_true", help="disable CUDA")

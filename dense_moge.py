@@ -29,6 +29,37 @@ def log(msg):
     print(f"[dense] {msg}", flush=True)
 
 
+_MODEL = {}
+
+
+def load_moge(name="Ruicheng/moge-2-vitl-normal"):
+    import torch
+    from moge.model.v2 import MoGeModel
+    if name not in _MODEL:
+        dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        _MODEL[name] = MoGeModel.from_pretrained(name).to(dev).eval()
+    return _MODEL[name]
+
+
+def estimate_focal(frames, width=960):
+    """Median focal length (pixels, at the frames' full resolution) predicted by MoGe-2."""
+    import cv2
+    import torch
+    model = load_moge()
+    dev = next(model.parameters()).device
+    fx = []
+    for fn in frames:
+        bgr = cv2.imread(str(fn))
+        W0 = bgr.shape[1]
+        h = int(round(bgr.shape[0] * width / W0)) // 2 * 2
+        rgb = cv2.cvtColor(cv2.resize(bgr, (width, h), interpolation=cv2.INTER_AREA), cv2.COLOR_BGR2RGB)
+        t = torch.from_numpy(rgb).to(dev).permute(2, 0, 1).float() / 255
+        with torch.no_grad():
+            out = model.infer(t, use_fp16=dev.type == "cuda")
+        fx.append(float(out["intrinsics"][0, 0]) * W0)   # intrinsics are normalised by width
+    return float(np.median(fx))
+
+
 def pick_images(rec, n):
     imgs = sorted(rec.images.values(), key=lambda im: im.name)
     if len(imgs) <= n:
@@ -76,8 +107,8 @@ def main():
     sel = pick_images(rec, a.frames)
     log(f"{rec.num_reg_images()} registered frames, using {len(sel)}")
 
-    dev = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    model = MoGeModel.from_pretrained(a.model).to(dev).eval()
+    model = load_moge(a.model)
+    dev = next(model.parameters()).device
 
     clouds, colors, ratios_metric = [], [], []
     for k, im in enumerate(sel):
