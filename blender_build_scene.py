@@ -231,7 +231,8 @@ def main():
     centers = [(-(q.to_matrix().transposed() @ t)) for _, _, q, t in imgs]
     pts = [Vector(p) for p in xyz] or centers
     if pts:
-        mid = sum(pts, Vector()) / len(pts)
+        # median centre: a few far-away points must not inflate the scene size
+        mid = Vector([sorted(p[k] for p in pts)[len(pts) // 2] for k in range(3)])
         d = sorted((p - mid).length for p in pts)
         extent = d[int(len(d) * 0.9)] if d else 1.0
     else:

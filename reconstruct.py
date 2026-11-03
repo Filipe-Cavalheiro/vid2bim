@@ -110,6 +110,28 @@ def cross_video_pairs(images_root: Path, groups: list[str], per_video: int) -> l
     return pairs
 
 
+def clean_model(rec, min_points: int = 15) -> None:
+    """Remove what makes a model look broken in Blender:
+    frames registered with (almost) no 3D points - their poses are unreliable and the global
+    mapper can put them millions of units away - and isolated 3D points far from the scene."""
+    import numpy as np
+    bad_frames = {im.frame_id for im in rec.images.values()
+                  if im.has_pose and im.num_points3D < min_points}
+    for fid in bad_frames:
+        rec.deregister_frame(fid)
+    if rec.num_points3D():
+        ids = list(rec.point3D_ids())
+        P = np.array([rec.points3D[i].xyz for i in ids])
+        d = np.linalg.norm(P - np.median(P, axis=0), axis=1)
+        limit = 3 * np.percentile(d, 95)
+        far = [i for i, di in zip(ids, d) if di > limit]
+        for i in far:
+            rec.delete_point3D(i)
+    else:
+        far = []
+    log(f"      cleaned model: dropped {len(bad_frames)} unreliable frames, {len(far)} far points")
+
+
 def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
     import pycolmap
 
@@ -162,6 +184,7 @@ def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
         return None
 
     best_id, best = max(recs.items(), key=lambda kv: kv[1].num_reg_images())
+    clean_model(best)
     total = sum(len(list((images / g).glob("*.jpg"))) for g in groups)
     log(f"      {len(recs)} model(s); using #{best_id}: "
         f"{best.num_reg_images()}/{total} frames registered, {best.num_points3D()} points")
