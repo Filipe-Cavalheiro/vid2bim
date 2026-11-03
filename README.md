@@ -22,9 +22,19 @@ You need `ffmpeg`, Python ≥ 3.9 and Blender ≥ 4.0 on your `PATH`. An NVIDIA 
 ```bash
 ./vid2blend clip.mp4                       # one video  -> scenes/clip/clip.blend
 ./vid2blend a.mp4 b.mp4                    # two separate scenes
-./vid2blend videos/                        # every video in a folder, one scene each
+./vid2blend videos/                        # folder mode, see below
 ./vid2blend a.mp4 b.mp4 --merge street     # ALL videos in ONE shared scene
 ./vid2blend long.mp4 --fps 5               # extract only 5 frames per second (much faster)
+```
+
+**Folder mode.** `./vid2blend videos/` groups the videos by where they are:
+
+```
+videos/
+├── home/              # sub-folder = one space: clip.mp4, clip_1.mp4, ... are MERGED -> scenes/home/
+│   ├── clip.mp4
+│   └── clip_1.mp4
+└── garden.mp4         # loose video = isolated scene               -> scenes/garden/
 ```
 
 Useful options (see `./vid2blend -h` for all of them):

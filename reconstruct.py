@@ -37,19 +37,37 @@ def die(msg: str) -> None:
 # --------------------------------------------------------------------------- #
 # Inputs
 # --------------------------------------------------------------------------- #
-def collect_videos(inputs: list[str]) -> list[Path]:
-    videos: list[Path] = []
+def is_video(p: Path) -> bool:
+    return p.is_file() and p.suffix.lower() in VIDEO_EXTS
+
+
+def collect_jobs(inputs: list[str]) -> list[tuple[str | None, list[Path]]]:
+    """Group inputs into scenes.
+
+    * a video file                       -> its own scene
+    * a folder: loose videos             -> one scene each (isolated videos)
+                each sub-folder of videos -> ONE merged scene named after the sub-folder
+                                             (all its videos film the same space)
+    Returns [(merged_scene_name or None, [videos])].
+    """
+    jobs: list[tuple[str | None, list[Path]]] = []
     for item in inputs:
         p = Path(item).expanduser().resolve()
-        if p.is_dir():
-            videos += sorted(f for f in p.iterdir() if f.suffix.lower() in VIDEO_EXTS)
-        elif p.is_file():
-            videos.append(p)
+        if is_video(p):
+            jobs.append((None, [p]))
+        elif p.is_dir():
+            for f in sorted(p.iterdir()):
+                if is_video(f):
+                    jobs.append((None, [f]))
+                elif f.is_dir():
+                    vids = sorted(v for v in f.rglob("*") if is_video(v))
+                    if vids:
+                        jobs.append((safe_name(f), vids))
         else:
             die(f"input not found: {item}")
-    if not videos:
+    if not jobs:
         die("no video files found in the given inputs")
-    return videos
+    return jobs
 
 
 def safe_name(path: Path) -> str:
@@ -316,8 +334,9 @@ def main() -> None:
     ap.add_argument("inputs", nargs="+", help="video files and/or folders containing videos")
     ap.add_argument("-o", "--output", default=str(HERE / "scenes"), help="output folder")
     ap.add_argument("-m", "--merge", metavar="NAME",
-                    help="reconstruct ALL videos together into one scene called NAME "
-                         "(default: one separate scene per video)")
+                    help="reconstruct ALL inputs together into one scene called NAME. Without it, "
+                         "videos in a sub-folder (e.g. videos/home/*.mp4) are merged into one scene "
+                         "named after the folder, and loose videos get a scene each")
     ap.add_argument("--fps", type=float, default=None,
                     help="frames per second to extract (default: every frame, like the original script)")
     ap.add_argument("--max-image-size", type=int, default=4096, help="max frame side in pixels")
@@ -355,12 +374,14 @@ def main() -> None:
     if not args.no_blend and not blender:
         log("Blender not found - skipping .blend export (pass --blender /path/to/blender)")
 
-    videos = collect_videos(args.inputs)
+    groups = collect_jobs(args.inputs)
     out = Path(args.output).expanduser().resolve()
     out.mkdir(parents=True, exist_ok=True)
 
-    jobs = ([(out / args.merge, videos)] if args.merge
-            else [(out / safe_name(v), [v]) for v in videos])
+    if args.merge:   # explicit: everything into one scene
+        jobs = [(out / args.merge, [v for _, vids in groups for v in vids])]
+    else:            # sub-folders merge, loose videos stay isolated
+        jobs = [(out / (name or safe_name(vids[0])), vids) for name, vids in groups]
     for i, (scene, vids) in enumerate(jobs, 1):
         log(f"=== [{i}/{len(jobs)}] scene '{scene.name}' ({len(vids)} video(s)) ===")
         process_scene(scene, vids, args, blender)
