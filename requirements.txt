@@ -1,0 +1,1 @@
+pycolmap-cuda12  # or 'pycolmap' for CPU-only

@@ -1,0 +1,30 @@
+# Privacy: never commit footage or reconstructions (they can reveal locations).
+videos/
+scenes/
+*.mp4
+*.MP4
+*.mov
+*.MOV
+*.m4v
+*.mkv
+*.avi
+*.webm
+*.mts
+*.MTS
+*.m2ts
+*.jpg
+*.jpeg
+*.JPG
+*.png
+*.blend
+*.blend1
+*.ply
+*.db
+*.bin
+*.txt
+!requirements.txt
+
+# environment
+.venv/
+__pycache__/
+*.pyc
