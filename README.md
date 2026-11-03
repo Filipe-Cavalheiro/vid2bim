@@ -62,3 +62,16 @@ The `.blend` contains:
 - Textured, static scenes work best. Moving people, cars, water, sky and reflections hurt the result.
 - If you get several models, or few frames are registered, try a higher `--fps` (more overlap), a higher `--overlap`, or slower camera motion.
 - The camera solve ignores lens distortion in Blender (the default model is `SIMPLE_RADIAL`). For wide or fisheye lenses, try `--camera-model OPENCV`.
+
+## Credits and related projects
+
+vid2blend builds on other people's work. If it doesn't fit your needs, one of these might:
+
+- **[polyfjord](https://gist.github.com/polyfjord/4ed7e8988bdb9674145f1c270440200d)** wrote the original Windows `batch_reconstruct.bat` and the tutorial video it comes from. The pipeline and default parameters here follow that script.
+- **[COLMAP](https://colmap.github.io/)** / **[pycolmap](https://github.com/colmap/pycolmap)** do all of the reconstruction work.
+- **[SBCV's Photogrammetry Importer](https://github.com/SBCV/Blender-Addon-Photogrammetry-Importer)** is the Blender add-on the original workflow uses to import COLMAP models. The `model_txt/` output here stays compatible with it.
+- **[oneShot](https://github.com/beingcarrot/oneShot)** by beingcarrot is a Blender add-on that does video → COLMAP → Blender from inside Blender. If you prefer working in Blender's UI over the command line, use this one.
+- Unix ports of polyfjord's script:
+  - [Chaos-man's Linux guide and script](https://gist.github.com/Chaos-man/cbe063cbfb0624026f022a0ae8de021f) (GLOMAP)
+  - [Norgus's bash version](https://gist.github.com/Norgus/9e877924949d778db12c534ff1bafe36), adapted from celestial-33's macOS port
+  - [souhaib101's Polyfjord-COLMAP-Workflow](https://zff.dev/souhaib101/Polyfjord-COLMAP-Workflow) (POSIX shell)
