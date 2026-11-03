@@ -135,3 +135,7 @@ vid2blend builds on other people's work. If it doesn't fit your needs, one of th
   - [Chaos-man's Linux guide and script](https://gist.github.com/Chaos-man/cbe063cbfb0624026f022a0ae8de021f) (GLOMAP)
   - [Norgus's bash version](https://gist.github.com/Norgus/9e877924949d778db12c534ff1bafe36), adapted from celestial-33's macOS port
   - [souhaib101's Polyfjord-COLMAP-Workflow](https://zff.dev/souhaib101/Polyfjord-COLMAP-Workflow) (POSIX shell)
+
+## License
+
+vid2blend is released under the [MIT License](LICENSE). It downloads and uses third-party tools and models under their own licences: COLMAP (BSD-3), MoGe-2 (MIT), Cloud2BIM (MIT), Open3D (MIT), IfcOpenShell (LGPL-3), Grounding DINO and SAM 2.1 (Apache-2.0), FreeCAD (LGPL-2+) and Blender (GPL).
