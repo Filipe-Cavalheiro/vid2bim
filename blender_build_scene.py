@@ -123,6 +123,31 @@ BIM_COLORS = {
 }
 
 
+MATERIAL_LOOK = {   # roughness, metallic, sheen
+    "Fabric": (0.9, 0.0, 0.5), "Wood": (0.45, 0.0, 0.0), "Plastic": (0.3, 0.0, 0.0),
+    "Metal": (0.25, 1.0, 0.0), "Generic": (0.6, 0.0, 0.0),
+}
+
+
+def furniture_material(m):
+    name = f"{m['name']}_{m.get('material', 'Generic')}"
+    mat = bpy.data.materials.new(name)
+    c = [srgb_to_linear(x) for x in m["color"]] + [1.0]
+    mat.diffuse_color = c
+    mat.use_nodes = True
+    bsdf = mat.node_tree.nodes.get("Principled BSDF")
+    rough, metal, sheen = MATERIAL_LOOK.get(m.get("material", "Generic"), MATERIAL_LOOK["Generic"])
+    if bsdf:
+        bsdf.inputs["Base Color"].default_value = c
+        bsdf.inputs["Roughness"].default_value = rough
+        bsdf.inputs["Metallic"].default_value = metal
+        for key in ("Sheen Weight", "Sheen"):
+            if key in bsdf.inputs:
+                bsdf.inputs[key].default_value = sheen
+                break
+    return mat
+
+
 def add_bim_meshes(path):
     """IFC elements (already triangulated by IfcOpenShell, in metres) -> 'BIM' collection."""
     with open(path) as f:
@@ -136,6 +161,12 @@ def add_bim_meshes(path):
         me.from_pydata([tuple(v[i:i + 3]) for i in range(0, len(v), 3)], [],
                        [tuple(fc[i:i + 3]) for i in range(0, len(fc), 3)])
         me.update()
+        if "color" in m:          # measured colour -> own material (furniture)
+            me.materials.append(furniture_material(m))
+            ob = bpy.data.objects.new(m["name"], me)
+            ob["ifc_class"] = m["type"]
+            coll.objects.link(ob)
+            continue
         rgba = BIM_COLORS.get(m["type"], (0.8, 0.5, 0.3, 0.8))
         if m["type"] not in mats:
             mat = bpy.data.materials.new(m["type"])

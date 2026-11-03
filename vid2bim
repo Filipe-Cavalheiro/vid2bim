@@ -3,7 +3,7 @@
 set -euo pipefail
 DIR="$(cd "$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")" && pwd)"
 if [[ ! -x "$DIR/.venv/bin/python" ]]; then
-    echo "[vid2blend] .venv missing - run $DIR/setup.sh first" >&2
+    echo "[vid2bim] .venv missing - run $DIR/setup.sh first" >&2
     exit 1
 fi
 export QT_QPA_PLATFORM="${QT_QPA_PLATFORM:-offscreen}"

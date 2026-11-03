@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""vid2blend - turn one or more videos into a COLMAP sparse reconstruction
+"""vid2bim - turn one or more videos into a COLMAP sparse reconstruction
 and a ready-to-open Blender scene (colored point cloud + animated cameras).
 
 Unix port of polyfjord's batch_reconstruct.bat workflow:
@@ -26,11 +26,11 @@ VIDEO_EXTS = {".mp4", ".mov", ".m4v", ".mkv", ".avi", ".webm", ".mts", ".m2ts"}
 
 
 def log(msg: str) -> None:
-    print(f"[vid2blend] {msg}", flush=True)
+    print(f"[vid2bim] {msg}", flush=True)
 
 
 def die(msg: str) -> None:
-    print(f"[vid2blend] ERROR: {msg}", file=sys.stderr, flush=True)
+    print(f"[vid2bim] ERROR: {msg}", file=sys.stderr, flush=True)
     sys.exit(1)
 
 
@@ -278,6 +278,17 @@ def run_bim(scene: Path, args) -> None:
     log("[bim 2/2] align room, Cloud2BIM -> IFC, FreeCAD")
     if subprocess.run([py, str(HERE / "room_bim.py"), str(scene)]).returncode != 0:
         log("✖ BIM step failed (dense.ply / bim/aligned.ply are still usable)")
+        return
+    if args.objects:
+        log("[objects 1/2] detect + measure furniture (Grounding DINO + SAM 2.1)")
+        if subprocess.run([py, str(HERE / "objects.py"), str(scene), "--classes", args.classes]).returncode != 0:
+            log("✖ object detection failed")
+            return
+        log("[objects 2/2] FreeCAD templates -> house.ifc / house.FCStd")
+        if subprocess.run([py, str(HERE / "furniture.py"), str(scene)]).returncode != 0:
+            log("✖ furniture modelling failed")
+            return
+        log(f"      refine with an agent: see {HERE / 'agent' / 'refine_objects.md'}")
 
 
 # --------------------------------------------------------------------------- #
@@ -361,11 +372,18 @@ def main() -> None:
     ap.add_argument("--bim", action="store_true",
                     help="also build a BIM model of the room: dense cloud (MoGe-2) -> IFC (Cloud2BIM) "
                          "-> FreeCAD .FCStd, and add it to the .blend")
-    ap.add_argument("--dense-frames", type=int, default=60, help="with --bim: frames used for the dense cloud")
+    ap.add_argument("--objects", action="store_true",
+                    help="with --bim (implied): detect furniture, model it in FreeCAD and place it in the house")
+    ap.add_argument("--classes", default="bed,wardrobe,desk,chair,table,bookshelf,chest of drawers,"
+                                         "nightstand,sofa,television",
+                    help="comma separated object names for --objects")
+    ap.add_argument("--dense-frames", type=int, default=100, help="with --bim: frames used for the dense cloud")
     ap.add_argument("--rebuild-blend", action="store_true",
                     help="only re-create the .blend (and with --bim the BIM) of already reconstructed scenes")
     ap.add_argument("--force", action="store_true", help="redo scenes that already exist")
     args = ap.parse_args()
+    if args.objects:
+        args.bim = True
 
     for tool in ("ffmpeg", "ffprobe"):
         if not shutil.which(tool):

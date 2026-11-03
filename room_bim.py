@@ -46,43 +46,46 @@ def rotation_between(a, b):
 
 
 def camera_up(model_dir):
-    """Average 'up' of the handheld camera (-Y of COLMAP cameras), world frame."""
+    """Average 'up' of the handheld camera (-Y of COLMAP cameras) and camera centres (COLMAP units)."""
     import pycolmap
     rec = pycolmap.Reconstruction(model_dir)
-    downs = np.array([im.cam_from_world().rotation.matrix()[1] for im in rec.images.values()])
+    ims = [im for im in rec.images.values() if im.has_pose]
+    downs = np.array([im.cam_from_world().rotation.matrix()[1] for im in ims])
     up = -downs.mean(0)
-    return up / np.linalg.norm(up)
+    return up / np.linalg.norm(up), np.array([im.projection_center() for im in ims])
 
 
-def align(pcd, up_guess, max_tilt_deg=25):
+def align(pcd, up_guess, cam_centers, max_tilt_deg=15):
+    """Floor = lowest strong peak of horizontal-surface heights below the cameras
+    (bed and desk tops are higher, walls are not horizontal), refined by a plane fit."""
     import open3d as o3d
 
     P = np.asarray(pcd.points)
-    # find big planes roughly perpendicular to up_guess
-    rest = pcd
-    horizontal = []
-    for _ in range(8):
-        if len(rest.points) < 5000:
-            break
-        model, idx = rest.segment_plane(distance_threshold=0.02, ransac_n=3, num_iterations=2000)
-        n = np.array(model[:3]); n /= np.linalg.norm(n)
-        if abs(n @ up_guess) > np.cos(np.radians(max_tilt_deg)):
-            if n @ up_guess < 0:
-                n, d = -n, -model[3]
-            else:
-                d = model[3]
-            horizontal.append((n, d, len(idx)))
-        rest = rest.select_by_index(idx, invert=True)
-    if horizontal:
-        # floor = lowest big horizontal plane (height of plane along up = -d)
-        big = [h for h in horizontal if h[2] > 0.02 * len(P)] or horizontal
-        n_floor, d_floor, _ = min(big, key=lambda h: -h[1])
-        log(f"floor plane found ({len(horizontal)} horizontal planes); "
-            f"tilt vs camera-up {np.degrees(np.arccos(np.clip(n_floor @ up_guess, -1, 1))):.1f}°")
-        up = n_floor
+    pc = o3d.geometry.PointCloud(pcd.points)
+    pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.06, max_nn=30))
+    N = np.asarray(pc.normals)
+    h = P @ up_guess
+    h_cam = float(np.median(cam_centers @ up_guess))
+    cand = (np.abs(N @ up_guess) > 0.9) & (h < h_cam - 0.8)
+    up, d_floor = up_guess, None
+    if cand.sum() > 500:
+        hist, edges = np.histogram(h[cand], bins=np.arange(h[cand].min(), h[cand].max() + 0.02, 0.02))
+        strong = np.nonzero(hist >= 0.3 * hist.max())[0]
+        floor_h = (edges[strong[0]] + edges[strong[0] + 1]) / 2
+        near = np.nonzero(cand & (np.abs(h - floor_h) < 0.05))[0]
+        sub = pcd.select_by_index(near)
+        model, _ = sub.segment_plane(distance_threshold=0.015, ransac_n=3, num_iterations=2000)
+        n = np.array(model[:3]) / np.linalg.norm(model[:3])
+        if n @ up_guess < 0:
+            n = -n
+        tilt = np.degrees(np.arccos(np.clip(n @ up_guess, -1, 1)))
+        if tilt < max_tilt_deg:
+            up = n
+        d_floor = -float(np.median(P[near] @ up))
+        log(f"floor {h_cam - floor_h:.2f} m below the cameras, tilt vs camera-up {tilt:.1f}°"
+            + ("" if tilt < max_tilt_deg else " (too large, keeping camera up)"))
     else:
-        log("no floor plane found, using camera up")
-        up, d_floor = up_guess, None
+        log("no floor found below the cameras, using camera up")
 
     R1 = rotation_between(up, np.array([0, 0, 1.0]))
     Q = P @ R1.T
@@ -150,9 +153,9 @@ def run_cloud2bim(work: Path, xyz: Path, args) -> Path:
         "min_wall_length": args.min_wall_length, "min_wall_thickness": 0.05,
         "max_wall_thickness": 0.75, "exterior_walls_thickness": 0.2,
         "output_ifc": str(ifc),
-        "ifc_project_name": work.parent.name, "ifc_project_long_name": "vid2blend room scan",
+        "ifc_project_name": work.parent.name, "ifc_project_long_name": "vid2bim room scan",
         "ifc_project_version": "1",
-        "ifc_author_name": "vid2blend", "ifc_author_surname": "", "ifc_author_organization": "",
+        "ifc_author_name": "vid2bim", "ifc_author_surname": "", "ifc_author_organization": "",
         "ifc_building_name": work.parent.name, "ifc_building_type": "Room",
         "ifc_building_phase": "Survey",
         # privacy: never write a real location into the model
@@ -229,12 +232,23 @@ def ifc_meshes(ifc: Path) -> Path:
         except Exception:
             continue
         g = shape.geometry
-        meshes.append({
+        m = {
             "name": f"{el.is_a()}_{el.id()}" + (f"_{el.Name}" if getattr(el, "Name", None) else ""),
             "type": el.is_a(),
             "verts": np.round(np.array(g.verts), 5).tolist(),
             "faces": list(g.faces),
-        })
+        }
+        try:   # surface colour + material name (set by furniture.py)
+            import ifcopenshell.util.element as ue
+            if g.materials:
+                d = g.materials[0].diffuse
+                m["color"] = [float(d.r()), float(d.g()), float(d.b())] if hasattr(d, "r") else [float(x) for x in d][:3]
+            mat = ue.get_material(el)
+            if mat is not None and getattr(mat, "Name", None):
+                m["material"] = mat.Name
+        except Exception:
+            pass
+        meshes.append(m)
     out = ifc.parent / "bim_meshes.json"
     out.write_text(json.dumps({"meshes": meshes}))
     counts = {}
@@ -247,7 +261,7 @@ def ifc_meshes(ifc: Path) -> Path:
 # --------------------------------------------------------------------------- #
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scene", help="vid2blend scene folder with dense.ply")
+    ap.add_argument("scene", help="vid2bim scene folder with dense.ply")
     ap.add_argument("--voxel", type=float, default=0.02, help="cloud spacing fed to Cloud2BIM (m)")
     ap.add_argument("--pc-resolution", type=float, default=0.02)
     ap.add_argument("--grid-coefficient", type=float, default=5)
@@ -268,8 +282,8 @@ def main():
 
     pcd = o3d.io.read_point_cloud(str(scene / "dense.ply"))
     pcd = pcd.voxel_down_sample(a.voxel)
-    up = camera_up(scene / "model_txt")
-    R, t = align(pcd, up)
+    up, centers = camera_up(scene / "model_txt")
+    R, t = align(pcd, up, centers * scale)
     P = np.asarray(pcd.points) @ R.T + t
     C = np.asarray(pcd.colors)
 

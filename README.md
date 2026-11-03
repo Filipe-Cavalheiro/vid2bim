@@ -1,104 +1,141 @@
-# vid2blend
+# vid2bim
 
-This tool turns one or more videos into a **3D point cloud with the camera track, as a ready-to-open Blender file**.
+vid2bim turns phone videos of a house into a **BIM model, in FreeCAD and Blender**. You get the walls and slabs, plus the furniture it recognizes, each modelled, coloured and placed at its measured position. Everything is built from open-source tools.
 
-It is a Unix port of [polyfjord's `batch_reconstruct.bat`](https://gist.github.com/polyfjord/4ed7e8988bdb9674145f1c270440200d) workflow, built on [COLMAP](https://colmap.github.io/) (through `pycolmap`) and ffmpeg. It writes the `.blend` directly, so you don't need an add-on. The COLMAP model it exports also works with [SBCV's Photogrammetry Importer](https://github.com/SBCV/Blender-Addon-Photogrammetry-Importer).
+```mermaid
+flowchart LR
+    V[/"📹 video(s)"/] --> F["ffmpeg<br/>frames"]
+    F --> C["COLMAP + GLOMAP<br/>camera track, sparse cloud"]
+    F -.-> FOV["MoGe-2<br/>focal length"] -.-> C
+    C --> BL[("scene.blend<br/>cameras + points")]
 
+    subgraph BIM ["--bim"]
+        C --> D["MoGe-2 depth<br/>+ multi-view check<br/>dense metric cloud"]
+        D --> A["Open3D<br/>level floor, square walls"]
+        A --> R["Cloud2BIM<br/>walls, slabs, openings"]
+        R --> IFC[("room.ifc")]
+    end
+
+    subgraph OBJ ["--objects"]
+        F --> G["Grounding DINO + SAM 2.1<br/>2D masks"]
+        D --> P["project masks onto mesh<br/>vote + cluster"]
+        G --> P
+        P --> T["FreeCAD templates<br/>bed, table, chair, …"]
+        T -.-> AG["🤖 agent refinement<br/>(optional, MCP)"]
+        AG -.-> T
+    end
+
+    IFC --> H[("house.ifc")]
+    T --> H
+    H --> FC[("house.FCStd<br/>FreeCAD")]
+    H --> BL2[("scene.blend<br/>BIM + materials")]
 ```
-video.mp4 ──ffmpeg──> frames ──SIFT──> features ──sequential match──> matches
-          ──incremental mapper──> sparse model ──Blender──> scene.blend
-```
+
+> [!NOTE]
+> vid2bim started as a Unix port of [polyfjord's `batch_reconstruct.bat`](https://gist.github.com/polyfjord/4ed7e8988bdb9674145f1c270440200d) workflow, built on [COLMAP](https://colmap.github.io/) (through `pycolmap`) and ffmpeg. Without `--bim`, it still does exactly that: it produces a `.blend` with the point cloud and camera track, and no add-on is needed. The COLMAP model it exports also works with [SBCV's Photogrammetry Importer](https://github.com/SBCV/Blender-Addon-Photogrammetry-Importer).
+
+> [!WARNING]
+> The BIM and furniture steps are **experimental**. The result depends heavily on how the video was filmed; see [Filming tips](#filming-tips).
 
 ## Setup
 
-You need `ffmpeg`, Python ≥ 3.9 and Blender ≥ 4.0 on your `PATH`. An NVIDIA GPU is optional but much faster.
+You need `ffmpeg`, Python ≥ 3.10 and Blender ≥ 4.0 on your `PATH`. For the BIM steps you also need FreeCAD 1.x (the Flatpak works). An NVIDIA GPU is strongly recommended; the scripts were developed on a 6 GB RTX 2060.
 
 ```bash
-./setup.sh            # creates .venv with pycolmap (CUDA build if a GPU is found)
+./setup.sh            # .venv with COLMAP (pycolmap, CUDA build if a GPU is found)
+./setup.sh --bim      # + PyTorch, MoGe-2, Open3D, IfcOpenShell, Cloud2BIM (about 4 GB)
 ```
+
+> [!NOTE]
+> The models are downloaded from Hugging Face the first time they are used:
+> - MoGe-2, about 1.3 GB
+> - Grounding DINO, about 0.9 GB
+> - SAM 2.1, about 0.3 GB
 
 ## Usage
 
 ```bash
-./vid2blend clip.mp4                       # one video  -> scenes/clip/clip.blend
-./vid2blend a.mp4 b.mp4                    # two separate scenes
-./vid2blend videos/                        # folder mode, see below
-./vid2blend a.mp4 b.mp4 --merge street     # ALL videos in ONE shared scene
-./vid2blend long.mp4 --fps 5               # extract only 5 frames per second (much faster)
+./vid2bim clip.mp4                              # camera track + point cloud -> scenes/clip/clip.blend
+./vid2bim clip.mp4 --fps 10 --bim               # + room BIM (IFC, FreeCAD, Blender)
+./vid2bim clip.mp4 --fps 10 --objects           # + furniture modelled and placed in the house
+./vid2bim videos/ --fps 10 --objects            # folder mode, see below
 ```
 
-**Folder mode.** `./vid2blend videos/` groups the videos by where they are:
+### Folder mode
+
+`./vid2bim videos/` groups the videos by where they are:
 
 ```
 videos/
-├── home/              # sub-folder = one space: clip.mp4, clip_1.mp4, ... are MERGED -> scenes/home/
+├── home/              # sub-folder = one space: all its videos are MERGED -> scenes/home/
 │   ├── clip.mp4
 │   └── clip_1.mp4
-└── garden.mp4         # loose video = isolated scene               -> scenes/garden/
+└── garden.mp4         # loose video = isolated scene                  -> scenes/garden/
 ```
 
-Useful options (see `./vid2blend -h` for all of them):
+> [!TIP]
+> Put every video of the same house in one sub-folder. Keyframes of each video are matched against all the others, so the clips end up in one shared model. Overlapping views, such as the same doorway filmed in two clips, make this much more reliable.
+
+### Options
+
+Run `./vid2bim -h` for the full list.
 
 | option | meaning |
 |---|---|
-| `--fps N` | Frames per second to extract. The default is every frame, as in the original script. For videos longer than about 30 s, 3–10 fps is usually plenty. |
-| `--merge NAME` | Reconstruct all the inputs together. Keyframes of each video are matched against every other video (`--cross-keyframes`), so the clips must overlap visually. |
+| `--fps N` | Frames per second to extract. The default is every frame. **10** is a good choice for walkthroughs. |
+| `--bim` | Build the room BIM: dense cloud → IFC → FreeCAD → Blender. |
+| `--objects` | Also detect, model and place furniture. Implies `--bim`. |
+| `--classes "bed,desk,…"` | Which objects to look for (open vocabulary). |
+| `--hfov DEG` | Your camera's horizontal field of view. It is estimated with MoGe-2 by default. |
+| `--ceiling-height M` | Ceiling height to use when the video never shows the ceiling. The default is 2.6. |
+| `--merge NAME` | Force all inputs into one scene. |
+| `--mapper global\|incremental` | COLMAP's global mapper (GLOMAP, the default) or the classic incremental mapper. |
 | `--overlap N` | How many neighbouring frames each frame is matched with. The default is 15. |
-| `--max-image-size PX` | Downscale frames whose longest side is larger than this. |
-| `--cpu` | Don't use CUDA. |
-| `--rebuild-blend` | Only regenerate the `.blend` for scenes that are already reconstructed. |
+| `--rebuild-blend` | Only regenerate the `.blend` (and with `--bim`, the BIM) of existing scenes. |
 | `--force` | Redo scenes that already exist. Existing scenes are skipped by default. |
 
-## Output (`scenes/<name>/`)
+> [!IMPORTANT]
+> Phone videos don't store the lens' focal length. A wrong focal length bends the whole room. vid2bim estimates it with MoGe-2 and keeps it fixed. If you know your phone's main-camera field of view, pass `--hfov`.
 
-| file | content |
-|---|---|
-| `<name>.blend` | The Blender scene, described below. |
-| `model_txt/` | The COLMAP model as `cameras.txt`, `images.txt` and `points3D.txt`. You can import it with the SBCV add-on. |
-| `points.ply` | The colored point cloud, for MeshLab, CloudCompare and similar tools. |
-| `sparse/<n>/` | Raw COLMAP binary models. If tracking broke, there is more than one; the largest one is used. |
-| `images/<video>/` | The extracted frames. |
-
-The `.blend` contains:
-
-- **`COLMAP`** is an empty that parents everything else. Rotate, scale and move it to level the scene and set real-world scale, because COLMAP's scale and orientation are arbitrary.
-- **`PointCloud`** holds the colored sparse points. Change the size under *Modifiers → Points → Point Radius*. It shows in Solid mode, Eevee and Cycles.
-- **`Cam_<video>`** is an animated camera for each video. It has the real focal length, and its background is the original frames, frame-accurate. Press *Numpad 0* and play the animation to check the solve.
-- **`Track_<video>`** is the camera path, drawn as a line.
-
-## Tips
-
-- Move the camera; don't just pan it. Reconstruction needs parallax.
-- Textured, static scenes work best. Moving people, cars, water, sky and reflections hurt the result.
-- If you get several models, or few frames are registered, try a higher `--fps` (more overlap), a higher `--overlap`, or slower camera motion.
-- The camera solve ignores lens distortion in Blender (the default model is `SIMPLE_RADIAL`). For wide or fisheye lenses, try `--camera-model OPENCV`.
-
-## Room → BIM (experimental)
-
-```bash
-./setup.sh --bim                      # once: PyTorch, MoGe-2, Open3D, IfcOpenShell, Cloud2BIM
-./vid2blend room.mp4 --fps 10 --bim
-```
+## How it works
 
 | step | tool (all open source) | output in `scenes/<name>/` |
 |---|---|---|
-| Camera poses | COLMAP global mapper (GLOMAP) | `model_txt/` |
-| Dense, metric cloud | [MoGe-2](https://github.com/microsoft/MoGe) (MIT): one depth map per frame, scaled and placed using the COLMAP poses | `dense.ply` |
-| Level and square the room | [Open3D](https://www.open3d.org/) (MIT): RANSAC floor plane, then the dominant wall direction | `bim/aligned.ply`, `bim/align.json` |
-| Point cloud → IFC4 | [Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM) (MIT): slabs, walls, door/window openings, spaces | `bim/room.ifc` |
-| FreeCAD | FreeCAD 1.x NativeIFC import | `bim/room.FCStd` |
-| Blender | Meshes from [IfcOpenShell](https://ifcopenshell.org/) (LGPL) | `<name>.blend` (`BIM` collection and `DenseCloud`) |
+| Camera poses | COLMAP + GLOMAP global mapper, with frames that have no 3D points removed | `model_txt/`, `<name>.blend` |
+| Dense, metric cloud | [MoGe-2](https://github.com/microsoft/MoGe) (MIT): one depth map per frame, scaled to the COLMAP points, smoothed over time, and kept only where neighbouring frames agree | `dense.ply`, `dense_mesh.ply` |
+| Level and square the room | [Open3D](https://www.open3d.org/) (MIT): the floor below the cameras, then the dominant wall direction | `bim/aligned.ply`, `bim/align.json` |
+| Point cloud → IFC4 | [Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM) (MIT): slabs, walls, door/window openings, spaces | `bim/room.ifc`, `bim/room.FCStd` |
+| Find furniture | [Grounding DINO](https://huggingface.co/IDEA-Research/grounding-dino-base) + [SAM 2.1](https://huggingface.co/facebook/sam2.1-hiera-base-plus) (Apache-2.0) on the frames, with the masks projected onto the mesh, voted on, then clustered | `objects/objects.json`, `<id>.ply`, `<id>.jpg` |
+| Model furniture | Parametric FreeCAD templates (bed, table, chair, shelf, cabinet, sofa…), sized and placed from the measurements | `objects/furniture.FCStd` |
+| Into the house | IfcOpenShell (LGPL) adds `IfcFurniture` with the measured colour and material | `bim/house.ifc`, `bim/house.FCStd` |
+| Blender | Meshes from IfcOpenShell; each furniture item gets its measured colour and a wood, fabric or plastic material | `<name>.blend` (`BIM` collection and `DenseCloud`) |
 
 Everything is in **metres, z-up, with the floor at z = 0**, in both FreeCAD and Blender.
 
-Filming tips for BIM:
-- Walk slowly along the walls instead of turning in place.
-- Include the floor and the ceiling.
-- Avoid long shots out of windows.
+The `.blend` contains:
+- **`COLMAP`** is an empty that holds the sparse `PointCloud`, the animated cameras `Cam_<video>` and their paths `Track_<video>`. With `--bim` it is already transformed into the metric BIM frame.
+- **`DenseCloud`** is the fused dense cloud. It is hidden in renders.
+- **`BIM`** is a collection with the walls, slabs and furniture.
+
+> [!TIP]
+> Select `Cam_<video>`, press *Numpad 0* and play the animation. The original frames are the camera background, so you can see straight away whether the model lines up with the video.
+
+## Refining furniture with an agent
+
+The templates are a first draft. An agent can then look at each object's photo crop and points, and refine the FreeCAD model: which end the headboard is on, how many drawers there are, the leg style, wrong labels, duplicates. The instructions for the agent are in [`agent/refine_objects.md`](agent/refine_objects.md). With Claude Code:
+
+```bash
+claude -p "Follow agent/refine_objects.md for SCENE=scenes/home"
+```
+
+The agent finishes by running `furniture.py SCENE --from-fcstd`, which pushes the edited shapes into `house.ifc`, `house.FCStd` and the Blender meshes.
+
+> [!NOTE]
+> The agent step is optional and is the only part that isn't open source: Claude Code is a paid service. Any MCP-capable agent can follow the same instructions.
 
 ## AI agent access to Blender and FreeCAD (MCP)
 
-`.mcp.json` registers two MCP servers for this project, so Claude Code and other MCP-capable agents opened in this folder can drive the apps:
+`.mcp.json` registers two MCP servers for this project, so agents opened in this folder can drive the apps:
 
 - `blender` is [MCP for Blender](https://github.com/ahujasid/mcp-for-blender), started with `uvx mcp-for-blender`. Its telemetry is turned off in `.mcp.json`.
 - `freecad` is [freecad-mcp](https://github.com/neka-nat/freecad-mcp), started with `uvx freecad-mcp`.
@@ -107,7 +144,8 @@ Each server talks to an add-on that runs inside the app, so install the add-ons 
 
 ```bash
 # Blender add-on, then enable "Interface: MCP for Blender" in Preferences → Add-ons
-DISABLE_TELEMETRY=true uvx mcp-for-blender install-addon
+mkdir -p ~/.config/blender/4.0/scripts/addons
+DISABLE_TELEMETRY=true BLENDERMCP_ADDONS_DIR=~/.config/blender/4.0/scripts/addons uvx mcp-for-blender install-addon
 
 # FreeCAD add-on (the folder below is for the Flatpak install of FreeCAD 1.1;
 # in FreeCAD's Python console, os.path.join(FreeCAD.getUserAppDataDir(), "Mod") prints yours)
@@ -121,16 +159,26 @@ Each app has to be open for its agent tools to work:
 - **Blender:** the add-on starts its server on `localhost:9876` automatically. You can also start it from the **MCP for Blender** tab in the 3D view's `N` panel.
 - **FreeCAD:** switch to the **MCP Addon** workbench and click **Start RPC Server**, which listens on `127.0.0.1:9875`. Enable **FreeCAD MCP → Auto-Start Server** to have it start on its own.
 
-⚠️ Both servers let an agent run arbitrary Python inside the app, without authentication. Keep them bound to localhost, and save your work before letting an agent edit a scene.
+> [!CAUTION]
+> Both servers let an agent run **arbitrary Python** inside the app, without authentication. Keep them bound to localhost, and save your work before letting an agent edit a scene.
+
+## Filming tips
+
+> [!TIP]
+> - **Walk, don't spin.** Move sideways along the walls. COLMAP needs parallax, and turning in place gives none.
+> - **Go slowly through doorways and narrow hallways.** That's where tracking breaks.
+> - **Tilt up to the ceiling now and then**, and down to the floor.
+> - **Avoid long shots out of windows**, mirrors and plain white walls filling the whole frame.
+> - **Keep people and pets out of the shot.** Only static scenes reconstruct well.
 
 ## Credits and related projects
 
-vid2blend builds on other people's work. If it doesn't fit your needs, one of these might:
+vid2bim builds on other people's work. If it doesn't fit your needs, one of these might:
 
-- **[polyfjord](https://gist.github.com/polyfjord/4ed7e8988bdb9674145f1c270440200d)** wrote the original Windows `batch_reconstruct.bat` and the tutorial video it comes from. The pipeline and default parameters here follow that script.
-- **[COLMAP](https://colmap.github.io/)** / **[pycolmap](https://github.com/colmap/pycolmap)** do all of the reconstruction work.
-- **[SBCV's Photogrammetry Importer](https://github.com/SBCV/Blender-Addon-Photogrammetry-Importer)** is the Blender add-on the original workflow uses to import COLMAP models. The `model_txt/` output here stays compatible with it.
-- **[oneShot](https://github.com/beingcarrot/oneShot)** by beingcarrot is a Blender add-on that does video → COLMAP → Blender from inside Blender. If you prefer working in Blender's UI over the command line, use this one.
+- **[polyfjord](https://gist.github.com/polyfjord/4ed7e8988bdb9674145f1c270440200d)** wrote the original Windows `batch_reconstruct.bat` and the tutorial video it comes from.
+- **[COLMAP](https://colmap.github.io/)** / **[pycolmap](https://github.com/colmap/pycolmap)** handle the camera tracking, **[MoGe-2](https://github.com/microsoft/MoGe)** the dense depth, **[Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM)** the point cloud → IFC conversion, **[Grounding DINO](https://github.com/IDEA-Research/GroundingDINO)** and **[SAM 2](https://github.com/facebookresearch/sam2)** the object detection, and **[IfcOpenShell](https://ifcopenshell.org/)** the IFC handling.
+- **[SBCV's Photogrammetry Importer](https://github.com/SBCV/Blender-Addon-Photogrammetry-Importer)** is the Blender add-on the original workflow uses. The `model_txt/` output stays compatible with it.
+- **[oneShot](https://github.com/beingcarrot/oneShot)** by beingcarrot is a Blender add-on that does video → COLMAP → Blender from inside Blender.
 - Unix ports of polyfjord's script:
   - [Chaos-man's Linux guide and script](https://gist.github.com/Chaos-man/cbe063cbfb0624026f022a0ae8de021f) (GLOMAP)
   - [Norgus's bash version](https://gist.github.com/Norgus/9e877924949d778db12c534ff1bafe36), adapted from celestial-33's macOS port
@@ -138,4 +186,10 @@ vid2blend builds on other people's work. If it doesn't fit your needs, one of th
 
 ## License
 
-vid2blend is released under the [MIT License](LICENSE). It downloads and uses third-party tools and models under their own licences: COLMAP (BSD-3), MoGe-2 (MIT), Cloud2BIM (MIT), Open3D (MIT), IfcOpenShell (LGPL-3), Grounding DINO and SAM 2.1 (Apache-2.0), FreeCAD (LGPL-2+) and Blender (GPL).
+vid2bim is released under the [MIT License](LICENSE). It downloads and uses third-party tools and models under their own licences:
+- COLMAP (BSD-3)
+- MoGe-2, Cloud2BIM and Open3D (MIT)
+- Grounding DINO and SAM 2.1 (Apache-2.0)
+- IfcOpenShell (LGPL-3)
+- FreeCAD (LGPL-2+)
+- Blender (GPL)

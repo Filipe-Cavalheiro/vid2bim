@@ -28,5 +28,5 @@ if [[ "${1:-}" == "--bim" ]]; then
         GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/VaclavNezerka/Cloud2BIM third_party/Cloud2BIM
     fi
 fi
-chmod +x vid2blend reconstruct.py
-echo "Ready:  ./vid2blend my_video.mp4"
+chmod +x vid2bim reconstruct.py
+echo "Ready:  ./vid2bim my_video.mp4"

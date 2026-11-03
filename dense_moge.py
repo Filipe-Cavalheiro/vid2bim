@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Dense, metric, geometrically consistent room model from a vid2blend scene.
+"""Dense, metric, geometrically consistent room model from a vid2bim scene.
 
 COLMAP gives accurate camera poses but sparse points; COLMAP multi-view stereo
 (MVS) is consistent across frames but leaves holes on plain walls; MoGe-2 (MIT,
@@ -125,12 +125,17 @@ def pick_frames(rec, n, min_points=15):
 
 def main():
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
-    ap.add_argument("scene", help="vid2blend scene folder (contains model_txt/ and images/)")
+    ap.add_argument("scene", help="vid2bim scene folder (contains model_txt/ and images/)")
     ap.add_argument("--frames", type=int, default=100, help="frames used for MVS + MoGe + fusion")
     ap.add_argument("--size", type=int, default=960, help="working image width (VRAM / speed)")
     ap.add_argument("--max-depth", type=float, default=6.0, help="ignore depth beyond this (metres)")
     ap.add_argument("--voxel", type=float, default=0.02, help="TSDF voxel size (metres)")
-    ap.add_argument("--no-mvs", action="store_true", help="skip COLMAP MVS (MoGe aligned to sparse points only)")
+    ap.add_argument("--mvs", action="store_true",
+                    help="also run COLMAP PatchMatch stereo (slow: ~15 s/frame on a 6 GB GPU)")
+    ap.add_argument("--stride", type=int, default=2, help="use every Nth pixel")
+    ap.add_argument("--neighbours", type=int, default=4, help="frames on each side used for the consistency check")
+    ap.add_argument("--consistency", type=float, default=0.03, help="max relative depth disagreement")
+    ap.add_argument("--smooth", type=int, default=7, help="frames in the running median of the per-frame scale")
     ap.add_argument("--model", default="Ruicheng/moge-2-vitl-normal", help="MoGe-2 checkpoint (MIT)")
     a = ap.parse_args()
 
@@ -162,7 +167,7 @@ def main():
     shutil.rmtree(subset)
     urec = pycolmap.Reconstruction(mvs / "sparse")
     have_mvs = False
-    if not a.no_mvs:
+    if a.mvs:
         try:
             log("COLMAP PatchMatch stereo (GPU)")
             pm = pycolmap.PatchMatchOptions()
@@ -197,8 +202,10 @@ def main():
                 d_mvs = cv2.resize(d_mvs, (W, H), interpolation=cv2.INTER_NEAREST)
         valid_mvs = (d_mvs > 0) & m_moge if d_mvs is not None else np.zeros_like(m_moge)
 
-        if valid_mvs.sum() > 2000:
-            s, b, inl = robust_affine(d_moge[valid_mvs], d_mvs[valid_mvs])
+        if valid_mvs.sum() > 2000:            # scale only: MoGe depth is metric up to scale
+            r = d_mvs[valid_mvs] / d_moge[valid_mvs]
+            s, b = float(np.median(r)), 0.0
+            inl = float(np.mean(np.abs(r / s - 1) < 0.05))
             src = f"MVS {valid_mvs.mean() * 100:.0f}% px"
         else:
             # fall back to this frame's sparse COLMAP points (scale only)
@@ -220,39 +227,83 @@ def main():
             src = f"{ok.sum()} sparse pts"
         if s <= 0:
             continue
-        aligned = s * d_moge + b                        # COLMAP units
-        depth = np.where(m_moge, aligned, 0).astype(np.float32)
-        if d_mvs is not None:                           # trust MVS where it agrees with the fit
-            agree = (d_mvs > 0) & (np.abs(d_mvs - aligned) < 0.05 * aligned)
-            depth[agree] = d_mvs[agree]
         ratios.append(s)                                # COLMAP units per MoGe metre
-        frames.append((im, depth, rgb, (fx, fy, cx, cy)))
+        frames.append([im, d_moge, m_moge, d_mvs, rgb, (fx, fy, cx, cy), s])
         log(f"  [{k + 1}/{urec.num_images()}] {im.name}: scale {s:.3f} offset {b:+.3f} ({src}, {inl * 100:.0f}% inliers)")
 
     if not frames:
         raise SystemExit("no frames could be fused")
+    # the true metres->COLMAP factor is one constant; per-frame values are MoGe's own
+    # scale error + noise. Running median over neighbouring frames keeps the first, drops the second.
+    raw = np.array([f[6] for f in frames])
+    half = max(a.smooth // 2, 0)
+    for i, f in enumerate(frames):
+        f[6] = float(np.median(raw[max(0, i - half): i + half + 1]))
+    log(f"per-frame scale: median {np.median(raw):.3f}, spread ±{np.median(np.abs(raw / np.median(raw) - 1)) * 100:.0f}%")
     m_per_unit = 1.0 / float(np.median(ratios))
     log(f"1 COLMAP unit = {m_per_unit:.3f} m")
 
-    # ---- 4. TSDF fusion in metres -------------------------------------------
-    vol = o3d.pipelines.integration.ScalableTSDFVolume(
-        voxel_length=a.voxel, sdf_trunc=4 * a.voxel,
-        color_type=o3d.pipelines.integration.TSDFVolumeColorType.RGB8)
-    for im, depth, rgb, (fx, fy, cx, cy) in frames:
-        H, W = depth.shape
-        intr = o3d.camera.PinholeCameraIntrinsic(W, H, fx, fy, cx, cy)
-        T = np.eye(4)
-        T[:3, :3] = im.cam_from_world().rotation.matrix()
-        T[:3, 3] = im.cam_from_world().translation * m_per_unit
-        rgbd = o3d.geometry.RGBDImage.create_from_color_and_depth(
-            o3d.geometry.Image(np.ascontiguousarray(rgb)),
-            o3d.geometry.Image(np.ascontiguousarray(depth * m_per_unit)),
-            depth_scale=1.0, depth_trunc=a.max_depth, convert_rgb_to_intensity=False)
-        vol.integrate(rgbd, intr, T)
+    # ---- 4. multi-view consistent fusion in metres ------------------------------
+    # (Open3D's TSDF integration returns nothing in the 0.20 / Python 3.14 build, so
+    #  points are kept only where >= 2 neighbouring frames agree on the depth)
+    views = []
+    for im, d_moge, m_moge, d_mvs, rgb, (fx, fy, cx, cy), s in frames:
+        depth = np.where(m_moge, s * d_moge, 0).astype(np.float32)        # COLMAP units
+        if d_mvs is not None:                           # trust MVS where it agrees
+            agree = (d_mvs > 0) & (np.abs(d_mvs - depth) < 0.05 * depth)
+            depth[agree] = d_mvs[agree]
+        depth *= m_per_unit                             # metres
+        depth[depth > a.max_depth] = 0
+        R = im.cam_from_world().rotation.matrix()
+        t = im.cam_from_world().translation * m_per_unit
+        views.append((depth, rgb, np.array([fx, fy, cx, cy]), R, t))
 
-    pcd = vol.extract_point_cloud()
-    mesh = vol.extract_triangle_mesh()
-    mesh.compute_vertex_normals()
+    def project(P, view):
+        depth, _, (fx, fy, cx, cy), R, t = view
+        Pc = P @ R.T + t
+        z = Pc[:, 2]
+        ok = z > 0.05
+        u = np.full(len(P), -1, int)
+        v = np.full(len(P), -1, int)
+        u[ok] = np.round(fx * Pc[ok, 0] / z[ok] + cx).astype(int)
+        v[ok] = np.round(fy * Pc[ok, 1] / z[ok] + cy).astype(int)
+        H, W = depth.shape
+        ok &= (u >= 0) & (u < W) & (v >= 0) & (v < H)
+        d = np.zeros(len(P), np.float32)
+        d[ok] = depth[v[ok], u[ok]]
+        return z, d, ok & (d > 0)
+
+    pts, cols = [], []
+    for i, (depth, rgb, (fx, fy, cx, cy), R, t) in enumerate(views):
+        vv, uu = np.nonzero(depth[::a.stride, ::a.stride] > 0)
+        vv, uu = vv * a.stride, uu * a.stride
+        z = depth[vv, uu]
+        Pc = np.stack([(uu - cx) / fx * z, (vv - cy) / fy * z, z], 1)
+        P = (Pc - t) @ R                                 # world, metres
+        support = np.zeros(len(P), np.int32)
+        for j in range(max(0, i - a.neighbours), min(len(views), i + a.neighbours + 1)):
+            if j == i:
+                continue
+            zj, dj, okj = project(P, views[j])
+            support += okj & (np.abs(zj - dj) < a.consistency * zj)
+        keep = support >= 2
+        pts.append(P[keep].astype(np.float32))
+        cols.append(rgb[vv[keep], uu[keep]].astype(np.float32) / 255)
+    P = np.concatenate(pts)
+    C = np.concatenate(cols)
+    log(f"{len(P)} consistent points from {len(views)} frames")
+
+    pcd = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P.astype(np.float64)))
+    pcd.colors = o3d.utility.Vector3dVector(C.astype(np.float64))
+    pcd = pcd.voxel_down_sample(a.voxel / 2)
+    pcd, _ = pcd.remove_statistical_outlier(nb_neighbors=20, std_ratio=2.0)
+    pcd.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=4 * a.voxel, max_nn=30))
+    cams = np.array([-v[3].T @ v[4] for v in views])
+    pcd.orient_normals_towards_camera_location(cams.mean(0))
+    mesh, dens = o3d.geometry.TriangleMesh.create_from_point_cloud_poisson(pcd, depth=10)
+    dens = np.asarray(dens)
+    mesh.remove_vertices_by_mask(dens < np.quantile(dens, 0.08))
+    mesh = mesh.crop(pcd.get_axis_aligned_bounding_box())
     o3d.io.write_point_cloud(str(scene / "dense.ply"), pcd)
     o3d.io.write_triangle_mesh(str(scene / "dense_mesh.ply"), mesh)
     (scene / "dense.json").write_text(json.dumps({
