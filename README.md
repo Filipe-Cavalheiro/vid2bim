@@ -62,7 +62,3 @@ The `.blend` contains:
 - Textured, static scenes work best. Moving people, cars, water, sky and reflections hurt the result.
 - If you get several models, or few frames are registered, try a higher `--fps` (more overlap), a higher `--overlap`, or slower camera motion.
 - The camera solve ignores lens distortion in Blender (the default model is `SIMPLE_RADIAL`). For wide or fisheye lenses, try `--camera-model OPENCV`.
-
-## Privacy
-
-Videos, frames and reconstructions can reveal where they were filmed. `.gitignore` excludes `videos/`, `scenes/` and every media, model and `.blend` file. **Never force-add them.**
