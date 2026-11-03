@@ -183,6 +183,20 @@ doc = FreeCAD.newDocument("room")
 # FreeCAD 1.x NativeIFC importer (the legacy importIFC breaks with ifcopenshell 0.8)
 from nativeifc import ifc_import
 ifc_import.insert(ifc, doc.Name, strategy=2, shapemode=0, switchwb=False, silent=True, singledoc=False)
+# NativeIFC skips IfcFurnishingElement on import ("lazy loaded"): load furniture explicitly
+from nativeifc import ifc_tools
+prj = next(o for o in doc.Objects if getattr(o, "IfcClass", "") == "IfcProject")
+ifcfile = ifc_tools.get_ifcfile(prj)
+storeys = {{o.StepId: o for o in doc.Objects if getattr(o, "IfcClass", "") == "IfcBuildingStorey"}}
+n = 0
+for e in ifcfile.by_type("IfcFurnishingElement"):
+    obj = ifc_tools.create_object(e, doc, ifcfile)
+    for rel in e.ContainedInStructure:
+        st = storeys.get(rel.RelatingStructure.id())
+        if st is not None:
+            st.addObject(obj)
+    n += 1
+print("[freecad] furniture loaded:", n)
 doc.recompute()
 doc.saveAs(out)
 print("[freecad] objects:", len(doc.Objects), "->", out)
