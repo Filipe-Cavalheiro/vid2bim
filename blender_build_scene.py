@@ -65,14 +65,14 @@ def srgb_to_linear(c):
     return c / 12.92 if c <= 0.04045 else ((c + 0.055) / 1.055) ** 2.4
 
 
-def make_point_cloud(xyz, rgb, parent, radius):
-    mesh = bpy.data.meshes.new("PointCloud")
+def make_point_cloud(xyz, rgb, parent, radius, name="PointCloud"):
+    mesh = bpy.data.meshes.new(name)
     mesh.vertices.add(len(xyz))
     mesh.vertices.foreach_set("co", [c for p in xyz for c in p])
     col = mesh.color_attributes.new("Col", "FLOAT_COLOR", "POINT")
     col.data.foreach_set("color", [v for c in rgb for v in (*map(srgb_to_linear, c), 1.0)])
     mesh.update()
-    obj = bpy.data.objects.new("PointCloud", mesh)
+    obj = bpy.data.objects.new(name, mesh)
     bpy.context.scene.collection.objects.link(obj)
     obj.parent = parent
 
@@ -114,6 +114,44 @@ def make_point_cloud(xyz, rgb, parent, radius):
     mod = obj.modifiers.new("Points", "NODES")
     mod.node_group = ng
     return obj
+
+
+BIM_COLORS = {
+    "IfcWall": (0.85, 0.85, 0.8, 0.35), "IfcWallStandardCase": (0.85, 0.85, 0.8, 0.35),
+    "IfcSlab": (0.6, 0.6, 0.6, 0.35), "IfcDoor": (0.54, 0.4, 0.25, 0.8),
+    "IfcWindow": (0.6, 0.85, 1.0, 0.4),
+}
+
+
+def add_bim_meshes(path):
+    """IFC elements (already triangulated by IfcOpenShell, in metres) -> 'BIM' collection."""
+    with open(path) as f:
+        meshes = json.load(f)["meshes"]
+    coll = bpy.data.collections.new("BIM")
+    bpy.context.scene.collection.children.link(coll)
+    mats = {}
+    for m in meshes:
+        me = bpy.data.meshes.new(m["name"])
+        v, fc = m["verts"], m["faces"]
+        me.from_pydata([tuple(v[i:i + 3]) for i in range(0, len(v), 3)], [],
+                       [tuple(fc[i:i + 3]) for i in range(0, len(fc), 3)])
+        me.update()
+        rgba = BIM_COLORS.get(m["type"], (0.8, 0.5, 0.3, 0.8))
+        if m["type"] not in mats:
+            mat = bpy.data.materials.new(m["type"])
+            mat.diffuse_color = rgba
+            mat.use_nodes = True
+            bsdf = mat.node_tree.nodes.get("Principled BSDF")
+            if bsdf:
+                bsdf.inputs["Base Color"].default_value = rgba
+                bsdf.inputs["Alpha"].default_value = rgba[3]
+            mat.blend_method = "BLEND"
+            mats[m["type"]] = mat
+        me.materials.append(mats[m["type"]])
+        ob = bpy.data.objects.new(m["name"], me)
+        ob["ifc_class"] = m["type"]
+        coll.objects.link(ob)
+    print(f"[blender] {len(meshes)} BIM elements")
 
 
 def camera_intrinsics(cam_data, model, w, h, params):
@@ -159,6 +197,9 @@ def main():
     ap.add_argument("--meta", default=None)
     ap.add_argument("--output", required=True)
     ap.add_argument("--point-radius", type=float, default=None)
+    ap.add_argument("--align", default=None, help="align.json from room_bim.py (COLMAP -> metres, z-up)")
+    ap.add_argument("--bim-meshes", default=None, help="bim_meshes.json from room_bim.py")
+    ap.add_argument("--dense", default=None, help="aligned dense cloud .npz from room_bim.py")
     a = ap.parse_args(argv)
 
     meta = {"videos": []}
@@ -180,6 +221,10 @@ def main():
     root = bpy.data.objects.new("COLMAP", None)
     root.empty_display_type = "ARROWS"
     root.rotation_euler = (-math.pi / 2, 0, 0)
+    if a.align and os.path.exists(a.align):
+        # metric, floor at z=0, walls along x/y (same frame as the IFC model)
+        with open(a.align) as f:
+            root.matrix_world = Matrix(json.load(f)["colmap_to_bim"])
     scene.collection.objects.link(root)
 
     # robust scene size for a sensible default point radius
@@ -269,6 +314,14 @@ def main():
             scene.render.fps_base = round(fps) / fps if fps else 1.0
             fps_set = True
         print(f"[blender] {group}: {len(entries)} solved frames")
+
+    if a.dense and os.path.exists(a.dense):
+        import numpy as np
+        d = np.load(a.dense)
+        dense = make_point_cloud(d["xyz"].tolist(), d["rgb"].tolist(), None, 0.008, name="DenseCloud")
+        dense.hide_render = True
+    if a.bim_meshes and os.path.exists(a.bim_meshes):
+        add_bim_meshes(a.bim_meshes)
 
     scene.view_settings.view_transform = "Standard"  # true photo colors
     scene.frame_start, scene.frame_end = 1, max_frame

@@ -3,7 +3,7 @@
 and a ready-to-open Blender scene (colored point cloud + animated cameras).
 
 Unix port of polyfjord's batch_reconstruct.bat workflow:
-    ffmpeg frames -> SIFT features -> sequential matching -> incremental mapper
+    ffmpeg frames -> SIFT features -> sequential matching -> global/incremental mapper
 plus a direct Blender export (no add-on required). The TXT model it writes is
 also importable with SBCV's Blender Photogrammetry Importer add-on.
 """
@@ -149,10 +149,14 @@ def run_colmap(scene: Path, groups: list[str], args) -> Path | None:
         imp.match_list_path = str(pair_file)
         pycolmap.match_image_pairs(db, matching_options=match, pairing_options=imp, device=device)
 
-    log("[4/4] incremental mapping (this is the slow part)")
-    opts = pycolmap.IncrementalPipelineOptions()
-    opts.num_threads = os.cpu_count() or -1
-    recs = pycolmap.incremental_mapping(db, images, sparse, options=opts)
+    if args.mapper == "global":
+        log("[4/4] global mapping (GLOMAP)")
+        recs = pycolmap.global_mapping(db, images, sparse)
+    else:
+        log("[4/4] incremental mapping (this is the slow part)")
+        opts = pycolmap.IncrementalPipelineOptions()
+        opts.num_threads = os.cpu_count() or -1
+        recs = pycolmap.incremental_mapping(db, images, sparse, options=opts)
     if not recs:
         log("✖ mapper produced no model (too little texture/parallax? try more frames or --overlap)")
         return None
@@ -175,16 +179,36 @@ def build_blend(scene: Path, txt: Path, meta_path: Path, blender: str) -> None:
     out = scene / f"{scene.name}.blend"
     cmd = [blender, "--background", "--factory-startup", "--python", str(BLENDER_SCRIPT), "--",
            "--model", str(txt), "--meta", str(meta_path), "--output", str(out)]
+    bim = scene / "bim"
+    for flag, f in (("--align", bim / "align.json"), ("--dense", bim / "aligned.npz"),
+                    ("--bim-meshes", bim / "bim_meshes.json")):
+        if f.exists():
+            cmd += [flag, str(f)]
     if subprocess.run(cmd).returncode != 0 or not out.exists():
         log("✖ Blender export failed (the COLMAP model in model_txt/ is still usable)")
     else:
         log(f"✔ Blender scene: {out}")
 
 
+def run_bim(scene: Path, args) -> None:
+    """Dense metric cloud (MoGe-2) -> aligned room -> IFC (Cloud2BIM) -> FreeCAD."""
+    py = sys.executable
+    log("[bim 1/2] dense metric cloud (MoGe-2)")
+    if subprocess.run([py, str(HERE / "dense_moge.py"), str(scene),
+                       "--frames", str(args.dense_frames)]).returncode != 0:
+        log("✖ dense step failed - skipping BIM")
+        return
+    log("[bim 2/2] align room, Cloud2BIM -> IFC, FreeCAD")
+    if subprocess.run([py, str(HERE / "room_bim.py"), str(scene)]).returncode != 0:
+        log("✖ BIM step failed (dense.ply / bim/aligned.ply are still usable)")
+
+
 # --------------------------------------------------------------------------- #
 def process_scene(scene: Path, videos: list[Path], args, blender: str | None) -> None:
     done_marker = scene / ".done"
     if done_marker.exists() and args.rebuild_blend and not args.force:
+        if args.bim:
+            run_bim(scene, args)
         if blender:
             build_blend(scene, scene / "model_txt", scene / "scene.json", blender)
         return
@@ -215,6 +239,8 @@ def process_scene(scene: Path, videos: list[Path], args, blender: str | None) ->
     txt = run_colmap(scene, groups, args)
     if txt is None:
         return
+    if args.bim:
+        run_bim(scene, args)
     if blender:
         build_blend(scene, txt, meta_path, blender)
     if not args.keep_db:
@@ -239,6 +265,9 @@ def main() -> None:
     ap.add_argument("--overlap", type=int, default=15, help="sequential matcher overlap")
     ap.add_argument("--cross-keyframes", type=int, default=40,
                     help="with --merge: keyframes per video matched against every other video")
+    ap.add_argument("--mapper", choices=["global", "incremental"], default="global",
+                    help="global (GLOMAP) is faster and copes better with handheld pans; "
+                         "incremental is the original COLMAP mapper")
     ap.add_argument("--camera-model", default="SIMPLE_RADIAL",
                     help="COLMAP camera model (SIMPLE_RADIAL, OPENCV, PINHOLE, ...)")
     ap.add_argument("--cpu", action="store_true", help="disable CUDA")
@@ -246,8 +275,12 @@ def main() -> None:
                     help="Blender executable used to write the .blend")
     ap.add_argument("--no-blend", action="store_true", help="skip the .blend export")
     ap.add_argument("--keep-db", action="store_true", help="keep COLMAP database.db")
+    ap.add_argument("--bim", action="store_true",
+                    help="also build a BIM model of the room: dense cloud (MoGe-2) -> IFC (Cloud2BIM) "
+                         "-> FreeCAD .FCStd, and add it to the .blend")
+    ap.add_argument("--dense-frames", type=int, default=60, help="with --bim: frames used for the dense cloud")
     ap.add_argument("--rebuild-blend", action="store_true",
-                    help="only re-create the .blend of already reconstructed scenes")
+                    help="only re-create the .blend (and with --bim the BIM) of already reconstructed scenes")
     ap.add_argument("--force", action="store_true", help="redo scenes that already exist")
     args = ap.parse_args()
 

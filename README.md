@@ -63,6 +63,29 @@ The `.blend` contains:
 - If you get several models, or few frames are registered, try a higher `--fps` (more overlap), a higher `--overlap`, or slower camera motion.
 - The camera solve ignores lens distortion in Blender (the default model is `SIMPLE_RADIAL`). For wide or fisheye lenses, try `--camera-model OPENCV`.
 
+## Room → BIM (experimental)
+
+```bash
+./setup.sh --bim                      # once: PyTorch, MoGe-2, Open3D, IfcOpenShell, Cloud2BIM
+./vid2blend room.mp4 --fps 10 --bim
+```
+
+| step | tool (all open source) | output in `scenes/<name>/` |
+|---|---|---|
+| Camera poses | COLMAP global mapper (GLOMAP) | `model_txt/` |
+| Dense, metric cloud | [MoGe-2](https://github.com/microsoft/MoGe) (MIT): one depth map per frame, scaled and placed using the COLMAP poses | `dense.ply` |
+| Level and square the room | [Open3D](https://www.open3d.org/) (MIT): RANSAC floor plane, then the dominant wall direction | `bim/aligned.ply`, `bim/align.json` |
+| Point cloud → IFC4 | [Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM) (MIT): slabs, walls, door/window openings, spaces | `bim/room.ifc` |
+| FreeCAD | FreeCAD 1.x NativeIFC import | `bim/room.FCStd` |
+| Blender | Meshes from [IfcOpenShell](https://ifcopenshell.org/) (LGPL) | `<name>.blend` (`BIM` collection and `DenseCloud`) |
+
+Everything is in **metres, z-up, with the floor at z = 0**, in both FreeCAD and Blender.
+
+Filming tips for BIM:
+- Walk slowly along the walls instead of turning in place.
+- Include the floor and the ceiling.
+- Avoid long shots out of windows.
+
 ## AI agent access to Blender and FreeCAD (MCP)
 
 `.mcp.json` registers two MCP servers for this project, so Claude Code and other MCP-capable agents opened in this folder can drive the apps:

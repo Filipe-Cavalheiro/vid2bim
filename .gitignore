@@ -28,3 +28,6 @@ scenes/
 .venv/
 __pycache__/
 *.pyc
+
+# external tools cloned locally (see README)
+third_party/

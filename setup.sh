@@ -19,5 +19,14 @@ else
     "${PIP[@]}" pycolmap
 fi
 .venv/bin/python -c "import pycolmap; print('pycolmap', pycolmap.__version__, '| CUDA:', pycolmap.has_cuda)"
+
+# Optional BIM extras (./setup.sh --bim): MoGe-2 (MIT), Open3D (MIT), IfcOpenShell (LGPL), Cloud2BIM (MIT)
+if [[ "${1:-}" == "--bim" ]]; then
+    "${PIP[@]}" torch torchvision "git+https://github.com/microsoft/MoGe.git" open3d ifcopenshell \
+        shapely scikit-image pyyaml pandas matplotlib plotly tqdm scipy opencv-python-headless
+    if [[ ! -d third_party/Cloud2BIM ]]; then
+        GIT_LFS_SKIP_SMUDGE=1 git clone --depth 1 https://github.com/VaclavNezerka/Cloud2BIM third_party/Cloud2BIM
+    fi
+fi
 chmod +x vid2blend reconstruct.py
 echo "Ready:  ./vid2blend my_video.mp4"
