@@ -52,7 +52,7 @@ Keep it simple and solid: closed solids, no zero-thickness faces, and roughly un
 
 ## Finish
 
-1. Push the refined shapes into the house model and the Blender meshes:
+1. Push the refined shapes into the scene's final model (`SCENE/<name>.ifc` and `<name>.FCStd`) and the Blender meshes:
    `.venv/bin/python furniture.py SCENE --from-fcstd`
 2. Rebuild the Blender scene: `./vid2bim <the scene's videos> --rebuild-blend` (or ask the user which input produced it).
 3. Report one line per object: what you changed and why.

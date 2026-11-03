@@ -376,7 +376,11 @@ def main():
                         space.shading.color_type = "VERTEX"
                         space.clip_end = extent * 1000
 
+    bpy.context.preferences.filepaths.save_version = 0      # no <name>.blend1 backup copies
     bpy.ops.wm.save_as_mainfile(filepath=os.path.abspath(a.output))
+    stale = os.path.abspath(a.output) + "1"
+    if os.path.exists(stale):
+        os.remove(stale)
     print(f"[blender] saved {a.output}")
 
 

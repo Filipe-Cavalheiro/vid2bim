@@ -326,7 +326,7 @@ def run_bim(scene: Path, args) -> None:
         if subprocess.run([py, str(HERE / "objects.py"), str(scene), "--classes", args.classes]).returncode != 0:
             log("✖ object detection failed")
             return
-        log("[objects 2/2] FreeCAD templates -> house.ifc / house.FCStd")
+        log(f"[objects 2/2] FreeCAD templates -> {scene.name}.ifc / {scene.name}.FCStd")
         if subprocess.run([py, str(HERE / "furniture.py"), str(scene)]).returncode != 0:
             log("✖ furniture modelling failed")
             return

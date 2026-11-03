@@ -25,9 +25,9 @@ flowchart LR
         AG -.-> T
     end
 
-    IFC --> H[("house.ifc")]
+    IFC --> H[("‹scene›.ifc")]
     T --> H
-    H --> FC[("house.FCStd<br/>FreeCAD")]
+    H --> FC[("‹scene›.FCStd<br/>FreeCAD")]
     H --> BL2[("scene.blend<br/>BIM + materials")]
 ```
 
@@ -48,7 +48,7 @@ These are three frames from two handheld phone clips of one bedroom. Each row sh
 In this scene, vid2bim:
 - detected 10 furniture objects;
 - had the agent refinement step merge duplicates and fix labels, leaving 7: a bed, a chest of drawers, a wardrobe, a bookshelf, a nightstand, an office chair and a lounge chair;
-- modelled each one in FreeCAD and placed it in `house.ifc`.
+- modelled each one in FreeCAD and placed it in the scene's IFC and FreeCAD model.
 
 > [!NOTE]
 > These clips are mostly turning in place, which is the hardest case. The point cloud has "floaters" where frames disagree. Some objects are only partly scanned, so their models are approximate in size and position. A slow walk along the walls gives much cleaner results.
@@ -125,10 +125,10 @@ Run `./vid2bim -h` for the full list.
 | Camera poses | COLMAP + GLOMAP global mapper, with frames that have no 3D points removed | `model_txt/`, `<name>.blend` |
 | Dense, metric cloud | [MoGe-2](https://github.com/microsoft/MoGe) (MIT): one depth map per frame, scaled to the COLMAP points, smoothed over time, and kept only where neighbouring frames agree | `dense.ply`, `dense_mesh.ply` |
 | Level and square the room | [Open3D](https://www.open3d.org/) (MIT): the floor below the cameras, then the dominant wall direction | `bim/aligned.ply`, `bim/align.json` |
-| Point cloud → IFC4 | [Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM) (MIT): slabs, walls, door/window openings, spaces | `bim/room.ifc`, `bim/room.FCStd` |
+| Point cloud → IFC4 | [Cloud2BIM](https://github.com/VaclavNezerka/Cloud2BIM) (MIT): slabs, walls, door/window openings, spaces | `bim/room.ifc` |
 | Find furniture | [Grounding DINO](https://huggingface.co/IDEA-Research/grounding-dino-base) + [SAM 2.1](https://huggingface.co/facebook/sam2.1-hiera-base-plus) (Apache-2.0) on the frames, with the masks projected onto the mesh, voted on, then clustered | `objects/objects.json`, `<id>.ply`, `<id>.jpg` |
 | Model furniture | Parametric FreeCAD templates (bed, table, chair, shelf, cabinet, sofa…), sized and placed from the measurements | `objects/furniture.FCStd` |
-| Into the house | IfcOpenShell (LGPL) adds `IfcFurniture` with the measured colour and material | `bim/house.ifc`, `bim/house.FCStd` |
+| Into the model | IfcOpenShell (LGPL) adds `IfcFurniture` (or a typed proxy for vehicles) with the measured colour and material | `<name>.ifc`, `<name>.FCStd` |
 | Blender | Meshes from IfcOpenShell; each furniture item gets its measured colour and a wood, fabric or plastic material | `<name>.blend` (`BIM` collection and `DenseCloud`) |
 
 Everything is in **metres, z-up, with the floor at z = 0**, in both FreeCAD and Blender.
@@ -176,7 +176,7 @@ The templates are a first draft. An agent can then look at each object's photo c
 claude -p "Follow agent/refine_objects.md for SCENE=scenes/home"
 ```
 
-The agent finishes by running `furniture.py SCENE --from-fcstd`, which pushes the edited shapes into `house.ifc`, `house.FCStd` and the Blender meshes.
+The agent finishes by running `furniture.py SCENE --from-fcstd`, which pushes the edited shapes into `<name>.ifc`, `<name>.FCStd` and the Blender meshes.
 
 > [!NOTE]
 > The agent step is optional and is the only part that isn't open source: Claude Code is a paid service. Any MCP-capable agent can follow the same instructions.

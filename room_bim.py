@@ -6,11 +6,11 @@ Steps (all open source):
                dominant wall direction -> walls parallel to x/y (Manhattan)
   2. bim     : Cloud2BIM (MIT, github.com/VaclavNezerka/Cloud2BIM) -> room.ifc
                (slabs, walls, door/window openings, spaces)
-  3. freecad : open room.ifc headless in FreeCAD (BIM/IFC importer) -> room.FCStd
+  3. export  : <scene>/<name>.ifc and <name>.FCStd (FreeCAD NativeIFC import) at the scene root
   4. meshes  : triangulate room.ifc with IfcOpenShell -> bim_meshes.json for Blender
 
 Inputs : <scene>/dense.ply + dense.json (from dense_moge.py), <scene>/model_txt
-Outputs: <scene>/bim/{aligned.ply, room.xyz, config.yaml, room.ifc, room.FCStd,
+Outputs: <scene>/<name>.ifc + <name>.FCStd; intermediates in <scene>/bim/{aligned.ply, room.xyz, config.yaml, room.ifc,
          bim_meshes.json} and <scene>/bim/align.json (COLMAP -> BIM transform)
 """
 from __future__ import annotations
@@ -214,6 +214,21 @@ def freecad_cmd():
     return None
 
 
+def export_final(scene: Path) -> Path | None:
+    """The scene's final model, named after the scene, at its top level:
+    <scene>/<name>.ifc (shell + objects if any) and <scene>/<name>.FCStd built from it."""
+    src = scene / "bim" / "house.ifc"
+    if not src.exists():
+        src = scene / "bim" / "room.ifc"
+    if not src.exists():
+        return None
+    final = scene / f"{scene.name}.ifc"
+    shutil.copyfile(src, final)
+    for stale in (scene / "bim" / "room.FCStd", scene / "bim" / "house.FCStd"):
+        stale.unlink(missing_ok=True)
+    return to_freecad(final)
+
+
 def to_freecad(ifc: Path) -> Path | None:
     cmd = freecad_cmd()
     if not cmd:
@@ -349,7 +364,7 @@ def main():
         ifc = build(P, cams[:, :2], work / "room.ifc", scene.name)
         log(f"IFC: {ifc}")
         ifc_meshes(ifc)
-        to_freecad(ifc)
+        export_final(scene)
         return
 
     # Cloud2BIM needs a floor AND a ceiling slab. Phone videos often miss the ceiling:
@@ -390,7 +405,7 @@ def main():
     ifc = run_cloud2bim(work, xyz, a)
     log(f"IFC: {ifc}")
     ifc_meshes(ifc)
-    to_freecad(ifc)
+    export_final(scene)
 
 
 if __name__ == "__main__":

@@ -6,8 +6,8 @@
      sized by the measured box and placed at the measured position/yaw
      -> objects/furniture.FCStd (one Part object per item, editable)
   2. the shapes are tessellated and added to the house IFC as IfcFurniture with the
-     measured main colour -> bim/house.ifc
-  3. house.ifc -> FreeCAD (NativeIFC) -> bim/house.FCStd, and meshes for Blender
+     measured main colour -> bim/house.ifc (intermediate)
+  3. final model <scene>/<name>.ifc + <name>.FCStd, and meshes for Blender
 
 An agent can refine objects/furniture.FCStd afterwards (see agent/refine_objects.md);
 re-run this script with --from-fcstd to push the refined shapes into the house.
@@ -24,7 +24,7 @@ import numpy as np
 
 HERE = Path(__file__).resolve().parent
 sys.path.insert(0, str(HERE))
-from room_bim import freecad_cmd, ifc_meshes, to_freecad  # noqa: E402
+from room_bim import export_final, freecad_cmd, ifc_meshes  # noqa: E402
 
 
 def log(msg):
@@ -241,7 +241,7 @@ def main():
     add_to_ifc(room_ifc, house_ifc, objects, meshes)
     log(f"house IFC with {len(meshes)} furniture items: {house_ifc}")
     ifc_meshes(house_ifc)
-    to_freecad(house_ifc)
+    export_final(scene)
 
 
 if __name__ == "__main__":
