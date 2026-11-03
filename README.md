@@ -75,6 +75,8 @@ You need `ffmpeg`, Python ≥ 3.10 and Blender ≥ 4.0 on your `PATH`. For the B
 ./vid2bim clip.mp4 --fps 10 --bim               # + room BIM (IFC, FreeCAD, Blender)
 ./vid2bim clip.mp4 --fps 10 --objects           # + furniture modelled and placed in the house
 ./vid2bim videos/ --fps 10 --objects            # folder mode, see below
+./vid2bim street.mp4 --fps 10 --max-depth 25 --objects \
+         --classes "car,van,truck,bus,motorcycle,bicycle"   # outdoors, see below
 ```
 
 ### Folder mode
@@ -104,7 +106,9 @@ Run `./vid2bim -h` for the full list.
 | `--objects` | Also detect, model and place furniture. Implies `--bim`. |
 | `--classes "bed,desk,…"` | Which objects to look for (open vocabulary). |
 | `--hfov DEG` | Your camera's horizontal field of view. It is estimated with MoGe-2 by default. |
-| `--ceiling-height M` | Ceiling height to use when the video never shows the ceiling. The default is 2.6. |
+| `--ceiling-height M` | Indoors only: ceiling height to use when the video never shows the ceiling. The default is 2.6. |
+| `--scene-type auto\|indoor\|outdoor` | Room BIM (Cloud2BIM) or [outdoor mode](#outdoor-scenes). `auto` decides from the scan. |
+| `--max-depth M` | Ignore depth beyond this many metres in the dense cloud. The default is 6, which suits rooms; use **25** outdoors. |
 | `--merge NAME` | Force all inputs into one scene. |
 | `--mapper global\|incremental` | COLMAP's global mapper (GLOMAP, the default) or the classic incremental mapper. |
 | `--overlap N` | How many neighbouring frames each frame is matched with. The default is 15. |
@@ -136,6 +140,33 @@ The `.blend` contains:
 
 > [!TIP]
 > Select `Cam_<video>`, press *Numpad 0* and play the animation. The original frames are the camera background, so you can see straight away whether the model lines up with the video.
+
+## Outdoor scenes
+
+A room model makes no sense in a street: there is no ceiling, and the walls aren't around you. So for outdoor scans, vid2bim skips Cloud2BIM and only models what the scan really shows.
+
+| element | rule | IFC |
+|---|---|---|
+| Ground | One slab following the ground area that was actually scanned (not a rectangle) | `IfcSlab` (BASESLAB) |
+| Façade | A vertical surface becomes a wall only if it is at least **3 m long** and at least **2.5 m** of it is visible, at least **50 %** of it is covered by points, and it reaches the ground. Parked cars may hide up to 2.8 m of its bottom; the wall is then extended to the ground and noted in its description. | `IfcWall`, with its measured length and height, placed behind the visible face |
+| Vehicles | Detected with `--classes "car,van,…"`, modelled as body, cabin and wheels in their measured colour, rotated along the street | `IfcBuildingElementProxy` (type `car`, `van`, …) |
+| Ceiling, roof, invented walls | Never | none |
+
+Every vertical surface that fails a rule is listed in `scenes/<name>/room_run.log` with the reason: too short, too low, floating, or sparse.
+
+> [!NOTE]
+> **Outdoor mode is chosen automatically** when the scan reaches higher than 4 m (taller than a room) or is wider than 20 m without a ceiling over it. Force it either way with `--scene-type outdoor` or `--scene-type indoor`.
+
+> [!TIP]
+> **Moving vehicles are ignored automatically.** A car that drives by never sits in the same place in 3D, so its detections never collect enough consistent votes on the scanned surface to form an object. Only parked vehicles are modelled.
+
+> [!IMPORTANT]
+> Use `--max-depth 25` outdoors. With the default of 6 m, which is meant for rooms, most of every car and façade is cut off. Very large clouds are thinned to 800,000 points inside the `.blend`; the full cloud is always in `dense.ply`.
+
+Outdoor scans also tend to work better than indoor ones. Walking along a street gives COLMAP plenty of sideways movement, and façades, cars and pavement are full of texture. In our tests every frame was placed, and the dense depth agreed between frames to within ±1–3 %.
+
+> [!CAUTION]
+> Outdoor footage and its reconstruction show a real, recognisable place. `videos/` and `scenes/` are gitignored. Think twice before sharing street scans or screenshots of them.
 
 ## Refining furniture with an agent
 
