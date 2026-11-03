@@ -282,6 +282,8 @@ def main():
     ap.add_argument("--min-wall-length", type=float, default=0.5)
     ap.add_argument("--ceiling-height", type=float, default=2.6,
                     help="if the video did not capture the ceiling, add a synthetic one at this height (m)")
+    ap.add_argument("--scene-type", choices=["auto", "indoor", "outdoor"], default="auto",
+                    help="outdoor: only the scanned ground and real facades (no Cloud2BIM, no ceiling)")
     ap.add_argument("--skip-bim", action="store_true", help="only align")
     a = ap.parse_args()
 
@@ -319,6 +321,36 @@ def main():
     (work / "align.json").write_text(json.dumps({"colmap_to_bim": T.tolist(), "scale": scale}, indent=2))
 
     np.savez_compressed(work / "aligned.npz", xyz=P.astype(np.float32), rgb=C.astype(np.float32))
+
+    cams = (centers * scale) @ R.T + t                  # camera centres in the BIM frame
+    kind = a.scene_type
+    if kind == "auto":
+        # rooms are rarely > 4 m tall; a > 20 m scan without a ceiling covering it is a street
+        pc = o3d.geometry.PointCloud(o3d.utility.Vector3dVector(P))
+        pc.estimate_normals(o3d.geometry.KDTreeSearchParamHybrid(radius=0.1, max_nn=30))
+        horiz = np.abs(np.asarray(pc.normals)[:, 2]) > 0.85
+
+        def cells(m):
+            return set(map(tuple, np.floor(P[m, :2] / 0.5).astype(int)))
+
+        floor_c = cells(horiz & (P[:, 2] < 0.3))
+        ceil_c = cells(horiz & (P[:, 2] > np.median(cams[:, 2]) + 0.3))
+        cover = len(floor_c & ceil_c) / max(len(floor_c), 1)
+        top = float(np.percentile(P[:, 2], 99))
+        extent = float(max(np.ptp(P[:, 0]), np.ptp(P[:, 1])))
+        kind = "outdoor" if (top > 4.0 or (extent > 20 and cover < 0.5)) else "indoor"
+        log(f"scene type: {kind} (top {top:.1f} m, extent {extent:.0f} m, ceiling covers {cover * 100:.0f}% "
+            f"of the floor; override with --scene-type)")
+    (work / "scene_type.txt").write_text(kind)
+    if kind == "outdoor":
+        if a.skip_bim:
+            return
+        from outdoor_bim import build
+        ifc = build(P, cams[:, :2], work / "room.ifc", scene.name)
+        log(f"IFC: {ifc}")
+        ifc_meshes(ifc)
+        to_freecad(ifc)
+        return
 
     # Cloud2BIM needs a floor AND a ceiling slab. Phone videos often miss the ceiling:
     # then add a flat synthetic ceiling over the room footprint (marked grey, z = --ceiling-height).

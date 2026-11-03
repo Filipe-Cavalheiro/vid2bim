@@ -25,8 +25,9 @@ DEFAULT_CLASSES = ["bed", "wardrobe", "desk", "chair", "table", "bookshelf",
                    "chest of drawers", "nightstand", "sofa", "television"]
 
 
+VEHICLES = {"car", "van", "truck", "bus", "motorcycle", "bicycle"}
 FLOOR_STANDING = {"bed", "wardrobe", "desk", "chair", "table", "bookshelf", "chest of drawers",
-                  "nightstand", "sofa"}
+                  "nightstand", "sofa", "car", "van", "truck", "bus", "motorcycle", "bicycle"}
 
 
 def log(msg):
@@ -236,7 +237,9 @@ def main():
         _, ev = np.linalg.eigh(np.cov(xy.T))
         yaw = float(np.arctan2(ev[1, 1], ev[0, 1]))
         snap = round(yaw / (np.pi / 2)) * (np.pi / 2)
-        if abs(yaw - snap) < np.radians(10):
+        # vehicles are parked along the street (the room/street axes); only one side of them
+        # is usually scanned, so their own principal axis is unreliable -> snap more eagerly
+        if abs(yaw - snap) < np.radians(25 if cls in VEHICLES else 10):
             yaw = snap
         c, s = np.cos(-yaw), np.sin(-yaw)
         loc = xy @ np.array([[c, s], [-s, c]])

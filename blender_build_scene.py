@@ -231,6 +231,7 @@ def main():
     ap.add_argument("--align", default=None, help="align.json from room_bim.py (COLMAP -> metres, z-up)")
     ap.add_argument("--bim-meshes", default=None, help="bim_meshes.json from room_bim.py")
     ap.add_argument("--dense", default=None, help="aligned dense cloud .npz from room_bim.py")
+    ap.add_argument("--max-dense-points", type=int, default=800000)
     a = ap.parse_args(argv)
 
     meta = {"videos": []}
@@ -350,7 +351,13 @@ def main():
     if a.dense and os.path.exists(a.dense):
         import numpy as np
         d = np.load(a.dense)
-        dense = make_point_cloud(d["xyz"].tolist(), d["rgb"].tolist(), None, 0.008, name="DenseCloud")
+        xyz, rgb = d["xyz"], d["rgb"]
+        if len(xyz) > a.max_dense_points:   # each point becomes a small sphere: keep memory sane
+            keep = np.random.default_rng(0).choice(len(xyz), a.max_dense_points, replace=False)
+            xyz, rgb = xyz[keep], rgb[keep]
+            print(f"[blender] dense cloud subsampled to {a.max_dense_points} points (full cloud: dense.ply)")
+        spacing = 0.008 if len(xyz) < 400000 else 0.015
+        dense = make_point_cloud(xyz.tolist(), rgb.tolist(), None, spacing, name="DenseCloud")
         dense.hide_render = True
     if a.bim_meshes and os.path.exists(a.bim_meshes):
         add_bim_meshes(a.bim_meshes)

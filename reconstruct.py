@@ -312,11 +312,13 @@ def run_bim(scene: Path, args) -> None:
     py = sys.executable
     log("[bim 1/2] dense metric cloud (MoGe-2)")
     if subprocess.run([py, str(HERE / "dense_moge.py"), str(scene),
-                       "--frames", str(args.dense_frames)]).returncode != 0:
+                       "--frames", str(args.dense_frames), "--max-depth", str(args.max_depth),
+                       "--voxel", str(0.02 if args.max_depth <= 8 else 0.03)]).returncode != 0:
         log("✖ dense step failed - skipping BIM")
         return
     log("[bim 2/2] align room, Cloud2BIM -> IFC, FreeCAD")
-    if subprocess.run([py, str(HERE / "room_bim.py"), str(scene)]).returncode != 0:
+    if subprocess.run([py, str(HERE / "room_bim.py"), str(scene), "--scene-type", args.scene_type,
+                       "--ceiling-height", str(args.ceiling_height)]).returncode != 0:
         log("✖ BIM step failed (dense.ply / bim/aligned.ply are still usable)")
         return
     if args.objects:
@@ -419,6 +421,13 @@ def main() -> None:
     ap.add_argument("--classes", default="bed,wardrobe,desk,chair,table,bookshelf,chest of drawers,"
                                          "nightstand,sofa,television",
                     help="comma separated object names for --objects")
+    ap.add_argument("--scene-type", choices=["auto", "indoor", "outdoor"], default="auto",
+                    help="with --bim: indoor = rooms via Cloud2BIM; outdoor = only scanned ground + real "
+                         "facades, never ceilings; auto decides from the scan")
+    ap.add_argument("--ceiling-height", type=float, default=2.6,
+                    help="indoor only: height of the synthetic ceiling when the video never shows it")
+    ap.add_argument("--max-depth", type=float, default=6.0,
+                    help="with --bim: ignore depth beyond this many metres (6 for rooms, ~25 outdoors)")
     ap.add_argument("--dense-frames", type=int, default=100, help="with --bim: frames used for the dense cloud")
     ap.add_argument("--rebuild-blend", action="store_true",
                     help="only re-create the .blend (and with --bim the BIM) of already reconstructed scenes")

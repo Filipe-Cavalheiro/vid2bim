@@ -93,7 +93,28 @@ def sofa(L, W, H):
             box(0.18, W, 0.62 * H - seat if 0.62 * H > seat else 0.1, x=-L / 2 + 0.09, z=seat),
             box(0.18, W, 0.62 * H - seat if 0.62 * H > seat else 0.1, x=L / 2 - 0.09, z=seat)]
 
+def wheels(L, W, r, t=0.2):
+    return [Part.makeCylinder(r, t, Vector(sx * (L / 2 - 1.6 * r), sy * W / 2 - (t if sy > 0 else 0), r),
+                              Vector(0, 1, 0))
+            for sx in (-1, 1) for sy in (-1, 1)]
+
+def vehicle(L, W, H, cabin=0.55, wheel=0.32):
+    r = min(wheel, 0.25 * H)
+    body_h = 0.5 * H
+    parts = [box(L, W - 0.04, body_h - r * 0.6, z=r * 0.6)]
+    parts.append(box(cabin * L, W - 0.16, H - body_h, x=-0.05 * L, z=body_h))   # cabin, slightly rear
+    return parts + wheels(L, W, r)
+
+def two_wheeler(L, W, H):
+    r = min(0.33, 0.3 * H)
+    return [Part.makeCylinder(r, 0.08, Vector(sx * (L / 2 - r), -0.04, r), Vector(0, 1, 0)) for sx in (-1, 1)] + \
+           [box(L - 2 * r, 0.12, 0.15, z=r), box(0.25, 0.12, H - r, x=L / 2 - r, z=r)]
+
 TEMPLATES = {{
+    "car": vehicle, "van": lambda L, W, H: vehicle(L, W, H, cabin=0.8),
+    "truck": lambda L, W, H: vehicle(L, W, H, cabin=0.3, wheel=0.45),
+    "bus": lambda L, W, H: vehicle(L, W, H, cabin=0.95, wheel=0.45),
+    "motorcycle": two_wheeler, "bicycle": two_wheeler,
     "bed": bed, "desk": table, "table": table, "chair": chair, "bookshelf": shelf,
     "wardrobe": lambda L, W, H: cabinet(L, W, H, fronts=2 if L < 1.2 else 3),
     "chest of drawers": lambda L, W, H: cabinet(L, W, H, drawers=4),
@@ -157,7 +178,10 @@ MATERIAL_BY_CLASS = {
     "bed": "Fabric", "sofa": "Fabric", "chair": "Fabric",
     "wardrobe": "Wood", "desk": "Wood", "table": "Wood", "bookshelf": "Wood",
     "chest of drawers": "Wood", "nightstand": "Wood", "television": "Plastic",
+    "car": "Metal", "van": "Metal", "truck": "Metal", "bus": "Metal",
+    "motorcycle": "Metal", "bicycle": "Metal",
 }
+VEHICLES = {"car", "van", "truck", "bus", "motorcycle", "bicycle"}
 
 
 def add_to_ifc(room_ifc: Path, house_ifc: Path, objects: list, meshes: list) -> None:
@@ -172,7 +196,9 @@ def add_to_ifc(room_ifc: Path, house_ifc: Path, objects: list, meshes: list) -> 
     byid = {o["id"]: o for o in objects}
     for m in meshes:
         o = byid[m["id"]]
-        el = api.run("root.create_entity", f, ifc_class="IfcFurniture", name=m["id"])
+        # IFC has no vehicle class; a typed proxy keeps it out of the furniture tree
+        ifc_class = "IfcBuildingElementProxy" if o["class"] in VEHICLES else "IfcFurniture"
+        el = api.run("root.create_entity", f, ifc_class=ifc_class, name=m["id"])
         el.ObjectType = o["class"]
         pts = f.createIfcCartesianPointList3D([tuple(map(float, p)) for p in m["verts"]])
         tri = f.createIfcTriangulatedFaceSet(pts, None, None, [tuple(i + 1 for i in t) for t in m["faces"]], None)
