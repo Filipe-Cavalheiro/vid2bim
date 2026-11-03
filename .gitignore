@@ -31,3 +31,6 @@ __pycache__/
 
 # external tools cloned locally (see README)
 third_party/
+
+# README screenshots (reviewed before publishing)
+!docs/images/*.jpg

@@ -25,6 +25,10 @@ DEFAULT_CLASSES = ["bed", "wardrobe", "desk", "chair", "table", "bookshelf",
                    "chest of drawers", "nightstand", "sofa", "television"]
 
 
+FLOOR_STANDING = {"bed", "wardrobe", "desk", "chair", "table", "bookshelf", "chest of drawers",
+                  "nightstand", "sofa"}
+
+
 def log(msg):
     print(f"[objects] {msg}", flush=True)
 
@@ -240,7 +244,8 @@ def main():
         zlo, zhi = np.percentile(P[:, 2], [1, 98])
         if zhi < 0.1:                                   # below / in the floor: noise
             continue
-        if zlo < 0.15:                                  # standing on the floor
+        # furniture stands on the floor; the scan often misses its bottom (occluded)
+        if zlo < 0.15 or (cls in FLOOR_STANDING and zlo < 0.8):
             zlo = 0.0
         mid_loc = (lo + hi) / 2
         cxy = P[:, :2].mean(0) + mid_loc @ np.array([[c, -s], [s, c]])

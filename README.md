@@ -37,6 +37,22 @@ flowchart LR
 > [!WARNING]
 > The BIM and furniture steps are **experimental**. The result depends heavily on how the video was filmed; see [Filming tips](#filming-tips).
 
+## Example: video vs. reconstruction
+
+These are three frames from two handheld phone clips of one bedroom. Each row shows the original video frame on the left, then the fused dense point cloud and the BIM/furniture model, both rendered in Blender from **the same solved camera at the same frame**.
+
+![Video frame, dense point cloud and furniture model from the same camera: chest of drawers and bed](docs/images/compare_1.jpg)
+![Video frame, dense point cloud and furniture model from the same camera: bookshelf and wardrobe](docs/images/compare_2.jpg)
+![Video frame, dense point cloud and furniture model from the same camera: bed, wardrobe and chairs](docs/images/compare_3.jpg)
+
+In this scene, vid2bim:
+- detected 10 furniture objects;
+- had the agent refinement step merge duplicates and fix labels, leaving 7: a bed, a chest of drawers, a wardrobe, a bookshelf, a nightstand, an office chair and a lounge chair;
+- modelled each one in FreeCAD and placed it in `house.ifc`.
+
+> [!NOTE]
+> These clips are mostly turning in place, which is the hardest case. The point cloud has "floaters" where frames disagree. Some objects are only partly scanned, so their models are approximate in size and position. A slow walk along the walls gives much cleaner results.
+
 ## Setup
 
 You need `ffmpeg`, Python ≥ 3.10 and Blender ≥ 4.0 on your `PATH`. For the BIM steps you also need FreeCAD 1.x (the Flatpak works). An NVIDIA GPU is strongly recommended; the scripts were developed on a 6 GB RTX 2060.
