@@ -99,6 +99,7 @@ Run `./vid2bim -h` for the full list.
 | option | meaning |
 |---|---|
 | `--fps N` | Frames per second to extract. The default is every frame. **10** is a good choice for walkthroughs. |
+| `--frame-select sharp\|uniform` | With `--fps`, keep the **sharpest** frame of each interval (the default) or evenly spaced frames. |
 | `--bim` | Build the room BIM: dense cloud → IFC → FreeCAD → Blender. |
 | `--objects` | Also detect, model and place furniture. Implies `--bim`. |
 | `--classes "bed,desk,…"` | Which objects to look for (open vocabulary). |
@@ -186,6 +187,7 @@ Each app has to be open for its agent tools to work:
 > - **Tilt up to the ceiling now and then**, and down to the floor.
 > - **Avoid long shots out of windows**, mirrors and plain white walls filling the whole frame.
 > - **Keep people and pets out of the shot.** Only static scenes reconstruct well.
+> - **Don't stabilize the video**, and turn off your phone's video stabilization (EIS) if you can. Stabilization warps and crops every frame differently, which breaks the single-lens camera model. In a test it cost 15% of the 3D points. Picking the sharpest frame from each interval (the default) helps instead: +5% points, +12% matches per frame and 7% lower reprojection error.
 
 ## Credits and related projects
 

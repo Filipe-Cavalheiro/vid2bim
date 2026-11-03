@@ -91,8 +91,48 @@ def probe_fps(video: Path) -> float:
 # --------------------------------------------------------------------------- #
 # Pipeline steps
 # --------------------------------------------------------------------------- #
-def extract_frames(video: Path, out_dir: Path, fps: float | None, max_size: int) -> int:
+def extract_sharpest(video: Path, out_dir: Path, fps: float, max_size: int) -> int:
+    """Keep the sharpest frame (variance of the Laplacian) in every 1/fps window instead of
+    a fixed one: handheld phone video has motion blur on many frames, which costs SIFT matches."""
+    import cv2
+    cap = cv2.VideoCapture(str(video))
+    if not cap.isOpened():
+        die(f"cannot open {video}")
+    window, best, best_score, n, idx = 1.0 / fps, None, -1.0, 0, -1
+    while True:
+        ok, frame = cap.read()
+        if not ok:
+            break
+        t = cap.get(cv2.CAP_PROP_POS_MSEC) / 1000.0
+        w = int(t / window)
+        if w != idx and best is not None:
+            n += 1
+            cv2.imwrite(str(out_dir / f"frame_{n:06d}.jpg"), best, [cv2.IMWRITE_JPEG_QUALITY, 95])
+            best, best_score = None, -1.0
+        idx = w
+        h0, w0 = frame.shape[:2]
+        if max_size > 0 and max(h0, w0) > max_size:
+            s = max_size / max(h0, w0)
+            frame = cv2.resize(frame, (int(w0 * s) // 2 * 2, int(h0 * s) // 2 * 2), interpolation=cv2.INTER_AREA)
+        g = cv2.cvtColor(cv2.resize(frame, (480, int(480 * frame.shape[0] / frame.shape[1]))), cv2.COLOR_BGR2GRAY)
+        score = cv2.Laplacian(g, cv2.CV_64F).var()
+        if score > best_score:
+            best, best_score = frame, score
+    if best is not None:
+        n += 1
+        cv2.imwrite(str(out_dir / f"frame_{n:06d}.jpg"), best, [cv2.IMWRITE_JPEG_QUALITY, 95])
+    cap.release()
+    return n
+
+
+def extract_frames(video: Path, out_dir: Path, fps: float | None, max_size: int,
+                   select: str = "sharp") -> int:
     out_dir.mkdir(parents=True, exist_ok=True)
+    if fps and select == "sharp":
+        n = extract_sharpest(video, out_dir, fps, max_size)
+        if n == 0:
+            die(f"no frames extracted from {video}")
+        return n
     filters = []
     if fps:
         filters.append(f"fps={fps}")
@@ -316,7 +356,7 @@ def process_scene(scene: Path, videos: list[Path], args, blender: str | None) ->
             g += "_"
         groups.append(g)
         log(f"[1/4] extracting frames: {v.name}")
-        n = extract_frames(v, scene / "images" / g, args.fps, args.max_image_size)
+        n = extract_frames(v, scene / "images" / g, args.fps, args.max_image_size, args.frame_select)
         fps = args.fps or probe_fps(v)
         log(f"      {n} frames @ {fps:g} fps")
         meta["videos"].append({"group": g, "source": v.name, "fps": fps, "frames": n})
@@ -350,6 +390,8 @@ def main() -> None:
                          "named after the folder, and loose videos get a scene each")
     ap.add_argument("--fps", type=float, default=None,
                     help="frames per second to extract (default: every frame, like the original script)")
+    ap.add_argument("--frame-select", choices=["sharp", "uniform"], default="sharp",
+                    help="with --fps: keep the sharpest frame of each interval, or evenly spaced frames")
     ap.add_argument("--max-image-size", type=int, default=4096, help="max frame side in pixels")
     ap.add_argument("--overlap", type=int, default=15, help="sequential matcher overlap")
     ap.add_argument("--cross-keyframes", type=int, default=40,
